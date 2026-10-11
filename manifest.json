@@ -24,6 +24,14 @@
     },
     {
       "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "content/feed-scanner.js"
+      ]
+    },
+    {
+      "matches": [
         "https://dev.anchors.pro/*"
       ],
       "js": [

@@ -526,3 +526,213 @@ body {
     width: 350px;
     height: 350px
 }
+/* Investment posts from feed */
+.fs-link-btn {
+    margin-top: 14px;
+    background: none;
+    color: #a3a3a3;
+    font-size: 13px;
+    text-decoration: underline;
+    cursor: pointer
+}
+
+.fs-link-btn:hover {
+    color: #fff
+}
+
+body.fs-wide {
+    width: 420px;
+    height: 580px
+}
+
+.fs-view {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    height: 100%;
+    padding: 12px;
+    background: #171717;
+    color: #e5e5e5;
+    font-size: 13px
+}
+
+.fs-header {
+    display: flex;
+    align-items: center;
+    gap: 8px
+}
+
+.fs-header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff
+}
+
+.fs-icon-btn {
+    background: #262626;
+    color: #fff;
+    border-radius: 6px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer
+}
+
+.fs-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #a3a3a3
+}
+
+.fs-controls select,
+.fs-input {
+    background: #262626;
+    color: #fff;
+    border: 1px solid #404040;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px
+}
+
+.fs-input {
+    width: 100%;
+    padding: 6px 8px
+}
+
+.fs-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer
+}
+
+.fs-primary-btn {
+    background: #dc2627;
+    color: #fff;
+    border-radius: 6px;
+    padding: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer
+}
+
+.fs-primary-btn:disabled {
+    opacity: .6;
+    cursor: default
+}
+
+.fs-results {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 2px
+}
+
+.fs-muted {
+    color: #a3a3a3;
+    text-align: center;
+    margin-top: 16px
+}
+
+.fs-error {
+    color: #f87171;
+    text-align: center;
+    margin-top: 16px
+}
+
+.fs-summary {
+    color: #a3a3a3;
+    font-size: 12px
+}
+
+.fs-actions {
+    display: flex;
+    gap: 8px
+}
+
+.fs-secondary-btn {
+    background: #262626;
+    color: #fff;
+    border: 1px solid #404040;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer
+}
+
+.fs-card {
+    background: #212121;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px
+}
+
+.fs-card-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px
+}
+
+.fs-author {
+    color: #fff;
+    font-weight: 600
+}
+
+a.fs-author:hover,
+.fs-open:hover {
+    text-decoration: underline
+}
+
+.fs-score {
+    background: #14532d;
+    color: #86efac;
+    border-radius: 9999px;
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 18px;
+    flex-shrink: 0
+}
+
+.fs-headline {
+    color: #a3a3a3;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis
+}
+
+.fs-snippet {
+    white-space: pre-line;
+    word-break: break-word;
+    line-height: 1.4
+}
+
+.fs-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px
+}
+
+.fs-chip {
+    background: #2e2e2e;
+    color: #d4d4d4;
+    border-radius: 4px;
+    padding: 0 6px;
+    font-size: 11px
+}
+
+.fs-card-foot {
+    display: flex;
+    justify-content: space-between;
+    color: #a3a3a3;
+    font-size: 11px
+}
+
+.fs-open {
+    color: #60a5fa
+}

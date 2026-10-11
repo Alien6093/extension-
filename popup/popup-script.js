@@ -111,7 +111,7 @@ async function renderWelcome() {
       }
       // $('#root').html(`<div class="px-4"> <div class="py-2"> <span>anchors</span> </div> <div class="h-full py-6"> <div> <p>Welcome,</p> <h1 class="text-xl font-bold">${res?.data?.name}</h1> </div> </div> </div>`);
       $("#root").html(
-        `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Hi ${res?.data?.name}, <br /> Welcome to anchors, </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Make sure your media is upto date! </p> <div> <button id="gp__update_btn" class="flex px-[16px] py-[8px] items-center gap-[10px] rounded-[6px] bg-[#DC2627]"> <span class="text-[#FFF] text-[14px] not-italic font-medium leading-[24px]"> Update Your Media Kit </span> </button> </div> </div> </div>`,
+        `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Hi ${res?.data?.name}, <br /> Welcome to anchors, </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Make sure your media is upto date! </p> <div> <button id="gp__update_btn" class="flex px-[16px] py-[8px] items-center gap-[10px] rounded-[6px] bg-[#DC2627]"> <span class="text-[#FFF] text-[14px] not-italic font-medium leading-[24px]"> Update Your Media Kit </span> </button> </div> ${feedScannerEntryHtml()} </div> </div>`,
       );
 
       $("#gp__update_btn").click(function () {
@@ -122,6 +122,7 @@ async function renderWelcome() {
             `${COLLAB_CLIENT}/influencer/dashboard`,
         });
       });
+      bindFeedScannerEntry();
 
       try {
         chrome.storage.local.set({
@@ -143,12 +144,13 @@ async function renderWelcome() {
 function renderLogin() {
   trackPosthog("creator_extension_login_rendered", { env });
   $("#root").html(
-    `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Hi, <br /> Welcome to anchors, </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Make sure your media is upto date! </p> <div> <button id="gp__login_btn" class="flex px-[16px] py-[8px] items-center gap-[10px] rounded-[6px] bg-[#DC2627]"> <span class="text-[#FFF] text-[14px] not-italic font-medium leading-[24px]"> Login to Continue </span> </button> </div> </div> </div>`,
+    `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Hi, <br /> Welcome to anchors, </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Make sure your media is upto date! </p> <div> <button id="gp__login_btn" class="flex px-[16px] py-[8px] items-center gap-[10px] rounded-[6px] bg-[#DC2627]"> <span class="text-[#FFF] text-[14px] not-italic font-medium leading-[24px]"> Login to Continue </span> </button> </div> ${feedScannerEntryHtml()} </div> </div>`,
   );
   $("#gp__login_btn").click(function () {
     trackPosthog("creator_extension_login_clicked_popup", { env });
     chrome.tabs.create({ url: `${COLLAB_CLIENT}/influencer/login` });
   });
+  bindFeedScannerEntry();
 }
 
 function renderLoading() {
@@ -156,3 +158,320 @@ function renderLoading() {
     `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Loading... </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Hold on! </p> </div> </div>`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Investment posts from feed
+// ---------------------------------------------------------------------------
+
+const FEED_SCAN_STORAGE_KEY = "investmentFeedScan";
+const FEED_SCAN_SETTINGS_KEY = "investmentFeedScanSettings";
+const FEED_SCAN_STALE_MS = 5 * 60 * 1000;
+const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeLinkedInUrl(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.hostname === "www.linkedin.com"
+      ? parsed.href
+      : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function feedScannerEntryHtml() {
+  return `<button id="fs__open_btn" class="fs-link-btn">📈 Investment posts in my feed</button>`;
+}
+
+function bindFeedScannerEntry() {
+  $("#fs__open_btn").click(function () {
+    trackPosthog("creator_extension_feed_scanner_opened", { env });
+    renderFeedScanner();
+  });
+}
+
+async function getFeedScanSettings() {
+  const defaults = { maxPosts: 100, extraKeywords: "", includePromoted: false };
+  try {
+    const items = await chrome.storage.local.get([FEED_SCAN_SETTINGS_KEY]);
+    return { ...defaults, ...(items?.[FEED_SCAN_SETTINGS_KEY] || {}) };
+  } catch (error) {
+    return defaults;
+  }
+}
+
+async function getFeedScanState() {
+  try {
+    const items = await chrome.storage.local.get([FEED_SCAN_STORAGE_KEY]);
+    const state = items?.[FEED_SCAN_STORAGE_KEY] || null;
+    if (
+      state?.status === "running" &&
+      Date.now() - new Date(state.startedAt).getTime() > FEED_SCAN_STALE_MS
+    ) {
+      return {
+        status: "error",
+        error: "The last scan stopped before finishing (was the LinkedIn tab closed?).",
+      };
+    }
+    return state;
+  } catch (error) {
+    return null;
+  }
+}
+
+function getActiveTab() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) =>
+      resolve(tabs?.[0] || null),
+    );
+  });
+}
+
+function formatPostDate(post) {
+  if (post?.postedAt) {
+    const date = new Date(post.postedAt);
+    if (!isNaN(date)) {
+      return date.toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  }
+  return post?.relativeTime || "";
+}
+
+function feedPostCardHtml(post) {
+  const postUrl = safeLinkedInUrl(post.postUrl);
+  const authorUrl = safeLinkedInUrl(post.authorUrl);
+  const snippet =
+    post.text.length > 280 ? `${post.text.slice(0, 280)}…` : post.text;
+  const stats = [
+    post.likes != null ? `👍 ${post.likes}` : "",
+    post.comments != null ? `💬 ${post.comments}` : "",
+    formatPostDate(post),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const author = escapeHtml(post.author || "Unknown author");
+  return `
+    <div class="fs-card">
+      <div class="fs-card-head">
+        ${
+          authorUrl
+            ? `<a class="fs-author" href="${escapeHtml(authorUrl)}" target="_blank">${author}</a>`
+            : `<span class="fs-author">${author}</span>`
+        }
+        <span class="fs-score" title="Relevance score">${escapeHtml(post.score)}</span>
+      </div>
+      ${post.authorHeadline ? `<div class="fs-headline">${escapeHtml(post.authorHeadline)}</div>` : ""}
+      <div class="fs-snippet">${escapeHtml(snippet)}</div>
+      <div class="fs-chips">${post.matches
+        .map((match) => `<span class="fs-chip">${escapeHtml(match)}</span>`)
+        .join("")}</div>
+      <div class="fs-card-foot">
+        <span>${escapeHtml(stats)}</span>
+        ${postUrl ? `<a class="fs-open" href="${escapeHtml(postUrl)}" target="_blank">Open post ↗</a>` : ""}
+      </div>
+    </div>`;
+}
+
+function feedScanResultsHtml(state) {
+  if (!state) {
+    return `<p class="fs-muted">Open your LinkedIn feed in this tab and hit <b>Scan feed</b>.</p>`;
+  }
+  if (state.status === "running") {
+    return `<p class="fs-muted">Scanning your feed… ${escapeHtml(state.scanned || 0)} posts read so far.<br/>You can close this popup, results will be saved.</p>`;
+  }
+  if (state.status === "error") {
+    return `<p class="fs-error">${escapeHtml(state.error || "Scan failed.")}</p>`;
+  }
+
+  const posts = state.posts || [];
+  const summary = `<p class="fs-summary">Found <b>${posts.length}</b> investment posts in ${escapeHtml(state.scanned)} feed posts${
+    state.finishedAt
+      ? ` · ${escapeHtml(new Date(state.finishedAt).toLocaleString())}`
+      : ""
+  }</p>`;
+  if (!posts.length) {
+    return `${summary}<p class="fs-muted">No investment-related posts this time. Try scanning more posts or adding your own keywords.</p>`;
+  }
+  return `
+    ${summary}
+    <div class="fs-actions">
+      <button id="fs__csv_btn" class="fs-secondary-btn">Export CSV</button>
+      <button id="fs__copy_btn" class="fs-secondary-btn">Copy links</button>
+    </div>
+    ${posts.map(feedPostCardHtml).join("")}`;
+}
+
+function postsToCsv(posts) {
+  const columns = [
+    ["author", "Author"],
+    ["authorHeadline", "Headline"],
+    ["authorUrl", "Author URL"],
+    ["postUrl", "Post URL"],
+    ["postedAt", "Posted at"],
+    ["score", "Score"],
+    ["matches", "Matched keywords"],
+    ["likes", "Likes"],
+    ["comments", "Comments"],
+    ["reposts", "Reposts"],
+    ["text", "Text"],
+  ];
+  const cell = (value) => {
+    let text = Array.isArray(value) ? value.join("; ") : String(value ?? "");
+    // Stop spreadsheet apps from evaluating cells as formulas.
+    if (/^[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  return [
+    columns.map(([, label]) => cell(label)).join(","),
+    ...posts.map((post) => columns.map(([key]) => cell(post[key])).join(",")),
+  ].join("\r\n");
+}
+
+function downloadFile(filename, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function bindFeedScanResultActions(state) {
+  const posts = state?.posts || [];
+  $("#fs__csv_btn").click(function () {
+    trackPosthog("creator_extension_feed_scanner_exported", { env, count: posts.length });
+    const date = new Date().toISOString().slice(0, 10);
+    downloadFile(
+      `linkedin-investment-posts-${date}.csv`,
+      "﻿" + postsToCsv(posts),
+      "text/csv;charset=utf-8",
+    );
+  });
+  $("#fs__copy_btn").click(async function () {
+    const text = posts
+      .map((post) => `${post.author} — ${post.postUrl || ""}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      $(this).text("Copied!");
+    } catch (error) {
+      $(this).text("Copy failed");
+    }
+  });
+}
+
+function updateFeedScanResults(state) {
+  $("#fs__results").html(feedScanResultsHtml(state));
+  $("#fs__scan_btn")
+    .prop("disabled", state?.status === "running")
+    .text(
+      state?.status === "running"
+        ? "Scanning…"
+        : $("#fs__scan_btn").data("idle-label") || "Scan feed",
+    );
+  bindFeedScanResultActions(state);
+}
+
+async function startFeedScan() {
+  const tab = await getActiveTab();
+  if (!tab?.url?.startsWith("https://www.linkedin.com/")) {
+    chrome.tabs.create({ url: LINKEDIN_FEED_URL });
+    return;
+  }
+
+  const extraKeywords = $("#fs__keywords")
+    .val()
+    .split(",")
+    .map((keyword) => keyword.trim())
+    .filter(Boolean);
+  const settings = {
+    maxPosts: Number($("#fs__max_posts").val()) || 100,
+    extraKeywords: extraKeywords.join(", "),
+    includePromoted: $("#fs__promoted").is(":checked"),
+  };
+  chrome.storage.local.set({ [FEED_SCAN_SETTINGS_KEY]: settings });
+  trackPosthog("creator_extension_feed_scanner_started", {
+    env,
+    maxPosts: settings.maxPosts,
+  });
+
+  chrome.tabs.sendMessage(
+    tab.id,
+    {
+      action: "feedScanner-scan",
+      options: { ...settings, extraKeywords },
+    },
+    (response) => {
+      if (chrome.runtime.lastError || !response) {
+        updateFeedScanResults({
+          status: "error",
+          error:
+            "Couldn't reach the LinkedIn page. Reload the LinkedIn tab and try again.",
+        });
+        return;
+      }
+      if (!response.started) {
+        updateFeedScanResults({ status: "error", error: response.error });
+      }
+    },
+  );
+}
+
+async function renderFeedScanner() {
+  document.body.classList.add("fs-wide");
+  const [settings, state, tab] = await Promise.all([
+    getFeedScanSettings(),
+    getFeedScanState(),
+    getActiveTab(),
+  ]);
+  const onLinkedIn = tab?.url?.startsWith("https://www.linkedin.com/");
+  const maxPostOptions = [50, 100, 200, 300]
+    .map(
+      (count) =>
+        `<option value="${count}" ${Number(settings.maxPosts) === count ? "selected" : ""}>${count} posts</option>`,
+    )
+    .join("");
+
+  $("#root").html(`
+    <div class="fs-view">
+      <div class="fs-header">
+        <button id="fs__back_btn" class="fs-icon-btn" title="Back">←</button>
+        <h1>Investment posts in my feed</h1>
+      </div>
+      <div class="fs-controls">
+        <label>Scan
+          <select id="fs__max_posts">${maxPostOptions}</select>
+        </label>
+        <label class="fs-check"><input type="checkbox" id="fs__promoted" ${settings.includePromoted ? "checked" : ""}/> Include promoted</label>
+      </div>
+      <input id="fs__keywords" class="fs-input" placeholder="Extra keywords, comma separated (e.g. zerodha, fintech)" value="${escapeHtml(settings.extraKeywords)}"/>
+      <button id="fs__scan_btn" class="fs-primary-btn" data-idle-label="${onLinkedIn ? "Scan feed" : "Open LinkedIn feed"}"></button>
+      <div id="fs__results" class="fs-results"></div>
+    </div>`);
+
+  $("#fs__back_btn").click(() => window.location.reload());
+  $("#fs__scan_btn").click(startFeedScan);
+  updateFeedScanResults(state);
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[FEED_SCAN_STORAGE_KEY]) return;
+  if (!document.getElementById("fs__results")) return;
+  updateFeedScanResults(changes[FEED_SCAN_STORAGE_KEY].newValue);
+});
