@@ -168,6 +168,7 @@ const FEED_SCAN_SETTINGS_KEY = "investmentFeedScanSettings";
 const FEED_SCAN_STALE_MS = 5 * 60 * 1000;
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 const INVESTMENT_SHEET_URL_KEY = "investmentSheetWebAppUrl";
+const INVESTMENT_HISTORY_KEY = "investmentPostsHistory";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -319,12 +320,26 @@ function feedScanResultsHtml(state) {
   }
   return `
     ${summary}
+    ${historySyncHtml(state.historySync)}
     ${sheetSyncHtml(state.sheetSync)}
     <div class="fs-actions">
-      <button id="fs__csv_btn" class="fs-secondary-btn">Export CSV</button>
+      <button id="fs__csv_btn" class="fs-secondary-btn">Export this scan</button>
       <button id="fs__copy_btn" class="fs-secondary-btn">Copy links</button>
     </div>
     ${posts.map(feedPostCardHtml).join("")}`;
+}
+
+function historySyncHtml(sync) {
+  if (!sync) return "";
+  if (sync.status === "saved") {
+    const parts = [`<b>${escapeHtml(sync.added)}</b> new posts added to history`];
+    if (sync.alreadyStored) parts.push(`${escapeHtml(sync.alreadyStored)} already there`);
+    return `<p class="fs-sync fs-sync-ok">📚 ${parts.join(" · ")}</p>`;
+  }
+  if (sync.status === "error") {
+    return `<p class="fs-sync fs-sync-error">⚠️ Couldn't add to history: ${escapeHtml(sync.error)}</p>`;
+  }
+  return "";
 }
 
 function sheetSyncHtml(sync) {
@@ -344,44 +359,85 @@ function sheetSyncHtml(sync) {
   return "";
 }
 
-function postsToCsv(posts) {
-  const columns = [
-    ["postId", "Post ID"],
-    ["postUrl", "Post URL"],
-    ["author", "Author"],
-    ["authorPublicId", "Author public ID"],
-    ["authorUrn", "Author member URN"],
-    ["authorUrl", "Author profile URL"],
-    ["authorHeadline", "Author headline"],
-    ["postedAt", "Posted at"],
-    ["text", "Post content"],
-    ["repostedBy", "Reposted by"],
-    ["repostedByPublicId", "Reposted by public ID"],
-    ["repostedByUrn", "Reposted by member URN"],
-    ["repostedByUrl", "Reposted by profile URL"],
-    ["repostedAt", "Reposted at"],
-    ["repostComment", "Repost comment"],
-    ["repostId", "Repost ID"],
-    ["repostUrl", "Repost URL"],
-    ["links", "Links"],
-    ["feedContext", "Why it was in my feed"],
-    ["feedContextPersonUrl", "Feed reason person URL"],
-    ["matches", "Matched keywords"],
-    ["score", "Score"],
-    ["likes", "Likes"],
-    ["comments", "Comments"],
-    ["reposts", "Reposts"],
-  ];
-  const cell = (value) => {
-    let text = Array.isArray(value) ? value.join("; ") : String(value ?? "");
-    // Stop spreadsheet apps from evaluating cells as formulas.
-    if (/^[=+\-@]/.test(text)) text = `'${text}`;
-    return `"${text.replace(/"/g, '""')}"`;
-  };
-  return [
-    columns.map(([, label]) => cell(label)).join(","),
-    ...posts.map((post) => columns.map(([key]) => cell(post[key])).join(",")),
-  ].join("\r\n");
+// Same columns, in the same order, as the Google Sheet (google-sheets/Code.gs).
+const CSV_MAX_LINK_COLUMNS = 5;
+const CSV_COLUMNS = [
+  ["postId", "Post ID", "id"],
+  ["postUrl", "Post URL"],
+  ["author", "Author"],
+  ["authorPublicId", "Author public ID"],
+  ["authorUrn", "Author member URN"],
+  ["authorUrl", "Author profile URL"],
+  ["authorHeadline", "Author headline"],
+  ["postedAt", "Posted at", "date"],
+  ["text", "Post content"],
+  ["repostedBy", "Reposted by"],
+  ["repostedByPublicId", "Reposted by public ID"],
+  ["repostedByUrn", "Reposted by member URN"],
+  ["repostedByUrl", "Reposted by profile URL"],
+  ["repostedAt", "Reposted at", "date"],
+  ["repostComment", "Repost comment"],
+  ["repostId", "Repost ID", "id"],
+  ["repostUrl", "Repost URL"],
+  ...Array.from({ length: CSV_MAX_LINK_COLUMNS }, (_, i) => [
+    `link${i + 1}`,
+    `Link ${i + 1}`,
+  ]),
+  ["feedContext", "Why it was in my feed"],
+  ["feedContextPersonUrl", "Feed reason person URL"],
+  ["matches", "Matched keywords"],
+  ["score", "Score"],
+  ["likes", "Likes"],
+  ["comments", "Comments"],
+  ["reposts", "Reposts"],
+  ["savedAt", "Saved at", "date"],
+];
+
+// "2026-10-11 15:30" in local time: Excel and Google Sheets both read this as
+// a date, unlike the ISO "2026-10-11T10:00:00.000Z" format.
+function formatCsvDate(value) {
+  const date = new Date(value);
+  if (!value || isNaN(date)) return value ?? "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function csvCell(value, type) {
+  if (value === null || value === undefined || value === "") return "";
+  if (type === "date") value = formatCsvDate(value);
+  let text = Array.isArray(value) ? value.join(", ") : String(value);
+  if (type === "id") {
+    // 19-digit IDs: Excel would show 7.38E+18 and drop digits, so make
+    // spreadsheet apps keep them as text.
+    return `"=""${text.replace(/"/g, "")}"""`;
+  }
+  // Stop spreadsheet apps from evaluating cells as formulas.
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function postsToCsv(posts, fallbackSavedAt) {
+  const rows = posts.map((post) => {
+    const links = Array.isArray(post.links) ? post.links.filter(Boolean) : [];
+    const values = { ...post, savedAt: post.savedAt || fallbackSavedAt };
+    for (let i = 0; i < CSV_MAX_LINK_COLUMNS; i++) {
+      values[`link${i + 1}`] =
+        i === CSV_MAX_LINK_COLUMNS - 1
+          ? links.slice(i).join("\n")
+          : links[i] || "";
+    }
+    return CSV_COLUMNS.map(([key, , type]) => csvCell(values[key], type)).join(",");
+  });
+  return [CSV_COLUMNS.map(([, label]) => csvCell(label)).join(","), ...rows].join("\r\n");
+}
+
+function downloadCsv(name, posts, fallbackSavedAt) {
+  const date = new Date().toISOString().slice(0, 10);
+  downloadFile(
+    `${name}-${date}.csv`,
+    "\ufeff" + postsToCsv(posts, fallbackSavedAt),
+    "text/csv;charset=utf-8",
+  );
 }
 
 function downloadFile(filename, content, type) {
@@ -414,12 +470,7 @@ function bindFeedScanResultActions(state) {
   });
   $("#fs__csv_btn").click(function () {
     trackPosthog("creator_extension_feed_scanner_exported", { env, count: posts.length });
-    const date = new Date().toISOString().slice(0, 10);
-    downloadFile(
-      `linkedin-investment-posts-${date}.csv`,
-      "﻿" + postsToCsv(posts),
-      "text/csv;charset=utf-8",
-    );
+    downloadCsv("linkedin-investment-posts-scan", posts, state?.finishedAt);
   });
   $("#fs__copy_btn").click(async function () {
     const text = posts
@@ -522,14 +573,52 @@ async function renderFeedScanner() {
       </div>
       <input id="fs__keywords" class="fs-input" placeholder="Extra keywords, comma separated (e.g. zerodha, fintech)" value="${escapeHtml(settings.extraKeywords)}"/>
       <button id="fs__scan_btn" class="fs-primary-btn" data-idle-label="${onLinkedIn ? "Scan feed" : "Open LinkedIn feed"}"></button>
+      <div id="fs__history" class="fs-sheet-row fs-history"></div>
       <div id="fs__sheet" class="fs-sheet"></div>
       <div id="fs__results" class="fs-results"></div>
     </div>`);
 
   $("#fs__back_btn").click(() => window.location.reload());
   $("#fs__scan_btn").click(startFeedScan);
+  renderHistory();
   renderSheetConnection(sheetUrl);
   updateFeedScanResults(state);
+}
+
+async function getInvestmentHistory() {
+  try {
+    const items = await chrome.storage.local.get([INVESTMENT_HISTORY_KEY]);
+    return Array.isArray(items?.[INVESTMENT_HISTORY_KEY])
+      ? items[INVESTMENT_HISTORY_KEY]
+      : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+async function renderHistory() {
+  const history = await getInvestmentHistory();
+  $("#fs__history").html(`
+    <span>📚 History: <b>${history.length}</b> posts stored</span>
+    <span>
+      <button id="fs__history_download_btn" class="fs-secondary-btn" ${history.length ? "" : "disabled"}>Download all (CSV)</button>
+      <button id="fs__history_clear_btn" class="fs-inline-btn" ${history.length ? "" : "disabled"}>Clear</button>
+    </span>`);
+
+  $("#fs__history_download_btn").click(async function () {
+    const posts = await getInvestmentHistory();
+    trackPosthog("creator_extension_feed_scanner_history_downloaded", { env, count: posts.length });
+    downloadCsv("linkedin-investment-posts-history", posts);
+  });
+
+  $("#fs__history_clear_btn").click(async function () {
+    const count = (await getInvestmentHistory()).length;
+    if (!window.confirm(`Delete all ${count} stored posts from the history? This can't be undone. Download them first if you need them.`)) {
+      return;
+    }
+    await chrome.storage.local.remove(INVESTMENT_HISTORY_KEY);
+    trackPosthog("creator_extension_feed_scanner_history_cleared", { env, count });
+  });
 }
 
 function renderSheetConnection(sheetUrl, editing = false) {
@@ -595,7 +684,9 @@ function renderSheetConnection(sheetUrl, editing = false) {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes[FEED_SCAN_STORAGE_KEY]) return;
-  if (!document.getElementById("fs__results")) return;
-  updateFeedScanResults(changes[FEED_SCAN_STORAGE_KEY].newValue);
+  if (area !== "local" || !document.getElementById("fs__results")) return;
+  if (changes[FEED_SCAN_STORAGE_KEY]) {
+    updateFeedScanResults(changes[FEED_SCAN_STORAGE_KEY].newValue);
+  }
+  if (changes[INVESTMENT_HISTORY_KEY]) renderHistory();
 });

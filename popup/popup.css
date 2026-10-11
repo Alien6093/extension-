@@ -810,3 +810,13 @@ a.fs-author:hover,
     margin-top: 4px;
     font-size: 12px
 }
+
+.fs-history {
+    font-size: 12px;
+    color: #d4d4d4
+}
+
+.fs-history .fs-secondary-btn:disabled {
+    opacity: .5;
+    cursor: default
+}

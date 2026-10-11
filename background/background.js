@@ -879,6 +879,58 @@ async function callInvestmentSheet(url, init) {
   return data;
 }
 
+// ---------------------------------------------------------------------------
+// Investment posts history (kept in chrome.storage.local, downloadable as CSV
+// from the popup)
+// ---------------------------------------------------------------------------
+
+const INVESTMENT_HISTORY_KEY = "investmentPostsHistory";
+let investmentHistoryQueue = Promise.resolve();
+
+// Posts are matched on Post ID. A post read from the page without an ID is
+// matched on author + text instead.
+function investmentHistoryKey(post) {
+  if (post?.postId) return `id:${post.postId}`;
+  const text = String(post?.text || "").replace(/\s+/g, " ").trim();
+  return `text:${String(post?.author || "").trim()}|${text}`;
+}
+
+async function addToInvestmentHistory(posts) {
+  const items = await chrome.storage.local.get([INVESTMENT_HISTORY_KEY]);
+  const history = Array.isArray(items?.[INVESTMENT_HISTORY_KEY])
+    ? items[INVESTMENT_HISTORY_KEY]
+    : [];
+  const known = new Set(history.map(investmentHistoryKey));
+  const savedAt = new Date().toISOString();
+
+  let added = 0;
+  let alreadyStored = 0;
+  for (const post of Array.isArray(posts) ? posts : []) {
+    const key = investmentHistoryKey(post);
+    if (known.has(key)) {
+      alreadyStored++;
+      continue;
+    }
+    known.add(key);
+    history.push({
+      ...Object.fromEntries(
+        INVESTMENT_SHEET_FIELDS.map((field) => [field, post?.[field] ?? null]),
+      ),
+      savedAt,
+    });
+    added++;
+  }
+
+  if (added) await chrome.storage.local.set({ [INVESTMENT_HISTORY_KEY]: history });
+  return { status: "saved", added, alreadyStored, total: history.length };
+}
+
+function queueAddToInvestmentHistory(posts) {
+  const run = investmentHistoryQueue.then(() => addToInvestmentHistory(posts));
+  investmentHistoryQueue = run.catch(() => {});
+  return run;
+}
+
 async function testInvestmentSheet(url) {
   if (!isValidInvestmentSheetUrl(url)) {
     throw new Error(
@@ -924,6 +976,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request?.action === "bg-saveInvestmentPostsToSheet") {
     saveInvestmentPostsToSheet(request?.posts)
+      .then(sendResponse)
+      .catch((error) =>
+        sendResponse({ status: "error", error: error?.message || String(error) }),
+      );
+    return true;
+  }
+
+  if (request?.action === "bg-addToInvestmentHistory") {
+    queueAddToInvestmentHistory(request?.posts)
       .then(sendResponse)
       .catch((error) =>
         sendResponse({ status: "error", error: error?.message || String(error) }),

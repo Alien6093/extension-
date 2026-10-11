@@ -880,9 +880,26 @@
     };
     await saveScanState(result);
 
+    result.historySync = await saveToHistory(posts);
+    await saveScanState(result);
+
     result.sheetSync = await saveToGoogleSheet(posts);
     await saveScanState(result);
     return result;
+  }
+
+  // Adds the investment posts to the history kept by the background worker.
+  async function saveToHistory(posts) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "bg-addToInvestmentHistory",
+        posts,
+      });
+      if (!response) throw new Error("No response from the extension background.");
+      return response;
+    } catch (error) {
+      return { status: "error", error: error?.message || String(error) };
+    }
   }
 
   // Sends the investment posts to the Google Sheet web app (through the
