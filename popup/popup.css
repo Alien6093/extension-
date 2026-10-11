@@ -736,3 +736,77 @@ a.fs-author:hover,
 .fs-open {
     color: #60a5fa
 }
+
+.fs-repost {
+    color: #a3a3a3;
+    font-size: 12px;
+    font-style: italic
+}
+
+.fs-sync {
+    color: #a3a3a3;
+    font-size: 12px
+}
+
+.fs-sync-ok {
+    color: #86efac
+}
+
+.fs-sync-error {
+    color: #f87171
+}
+
+.fs-inline-btn {
+    background: none;
+    color: #60a5fa;
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer
+}
+
+.fs-inline-btn:disabled {
+    color: #a3a3a3;
+    cursor: default
+}
+
+.fs-sheet {
+    font-size: 12px;
+    color: #d4d4d4
+}
+
+.fs-sheet-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px
+}
+
+.fs-sheet-setup {
+    background: #212121;
+    border: 1px solid #2e2e2e;
+    border-radius: 8px;
+    padding: 8px 10px
+}
+
+.fs-sheet-setup summary {
+    cursor: pointer;
+    color: #fff
+}
+
+.fs-sheet-setup ol {
+    margin: 6px 0 8px 18px;
+    list-style: decimal;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    color: #a3a3a3
+}
+
+.fs-sheet-setup b {
+    color: #e5e5e5
+}
+
+.fs-sheet-msg {
+    margin-top: 4px;
+    font-size: 12px
+}

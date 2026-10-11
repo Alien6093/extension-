@@ -167,6 +167,7 @@ const FEED_SCAN_STORAGE_KEY = "investmentFeedScan";
 const FEED_SCAN_SETTINGS_KEY = "investmentFeedScanSettings";
 const FEED_SCAN_STALE_MS = 5 * 60 * 1000;
 const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const INVESTMENT_SHEET_URL_KEY = "investmentSheetWebAppUrl";
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -253,11 +254,12 @@ function formatPostDate(post) {
 function feedPostCardHtml(post) {
   const postUrl = safeLinkedInUrl(post.postUrl);
   const authorUrl = safeLinkedInUrl(post.authorUrl);
-  const snippet =
-    post.text.length > 280 ? `${post.text.slice(0, 280)}…` : post.text;
+  const text = post.text || "";
+  const snippet = text.length > 280 ? `${text.slice(0, 280)}…` : text;
   const stats = [
     post.likes != null ? `👍 ${post.likes}` : "",
     post.comments != null ? `💬 ${post.comments}` : "",
+    post.links?.length ? `🔗 ${post.links.length}` : "",
     formatPostDate(post),
   ]
     .filter(Boolean)
@@ -275,6 +277,15 @@ function feedPostCardHtml(post) {
         <span class="fs-score" title="Relevance score">${escapeHtml(post.score)}</span>
       </div>
       ${post.authorHeadline ? `<div class="fs-headline">${escapeHtml(post.authorHeadline)}</div>` : ""}
+      ${
+        post.repostedBy
+          ? `<div class="fs-repost">🔁 Reposted by ${escapeHtml(post.repostedBy)}${
+              post.repostComment ? `: “${escapeHtml(post.repostComment.slice(0, 140))}${post.repostComment.length > 140 ? "…" : ""}”` : ""
+            }</div>`
+          : post.feedContext
+            ? `<div class="fs-repost">${escapeHtml(post.feedContext)}</div>`
+            : ""
+      }
       <div class="fs-snippet">${escapeHtml(snippet)}</div>
       <div class="fs-chips">${post.matches
         .map((match) => `<span class="fs-chip">${escapeHtml(match)}</span>`)
@@ -308,6 +319,7 @@ function feedScanResultsHtml(state) {
   }
   return `
     ${summary}
+    ${sheetSyncHtml(state.sheetSync)}
     <div class="fs-actions">
       <button id="fs__csv_btn" class="fs-secondary-btn">Export CSV</button>
       <button id="fs__copy_btn" class="fs-secondary-btn">Copy links</button>
@@ -315,19 +327,50 @@ function feedScanResultsHtml(state) {
     ${posts.map(feedPostCardHtml).join("")}`;
 }
 
+function sheetSyncHtml(sync) {
+  if (!sync) return "";
+  if (sync.status === "saved") {
+    const parts = [`<b>${escapeHtml(sync.inserted)}</b> new rows saved to Google Sheet`];
+    if (sync.skipped) parts.push(`${escapeHtml(sync.skipped)} already there`);
+    if (sync.missingId) parts.push(`${escapeHtml(sync.missingId)} without a post ID not saved`);
+    return `<p class="fs-sync fs-sync-ok">✅ ${parts.join(" · ")}</p>`;
+  }
+  if (sync.status === "not-configured") {
+    return `<p class="fs-sync">Not saved: connect a Google Sheet above to save posts automatically.</p>`;
+  }
+  if (sync.status === "error") {
+    return `<p class="fs-sync fs-sync-error">⚠️ Couldn't save to Google Sheet: ${escapeHtml(sync.error)} <button id="fs__retry_sheet_btn" class="fs-inline-btn">Retry</button></p>`;
+  }
+  return "";
+}
+
 function postsToCsv(posts) {
   const columns = [
-    ["author", "Author"],
-    ["authorHeadline", "Headline"],
-    ["authorUrl", "Author URL"],
+    ["postId", "Post ID"],
     ["postUrl", "Post URL"],
+    ["author", "Author"],
+    ["authorPublicId", "Author public ID"],
+    ["authorUrn", "Author member URN"],
+    ["authorUrl", "Author profile URL"],
+    ["authorHeadline", "Author headline"],
     ["postedAt", "Posted at"],
-    ["score", "Score"],
+    ["text", "Post content"],
+    ["repostedBy", "Reposted by"],
+    ["repostedByPublicId", "Reposted by public ID"],
+    ["repostedByUrn", "Reposted by member URN"],
+    ["repostedByUrl", "Reposted by profile URL"],
+    ["repostedAt", "Reposted at"],
+    ["repostComment", "Repost comment"],
+    ["repostId", "Repost ID"],
+    ["repostUrl", "Repost URL"],
+    ["links", "Links"],
+    ["feedContext", "Why it was in my feed"],
+    ["feedContextPersonUrl", "Feed reason person URL"],
     ["matches", "Matched keywords"],
+    ["score", "Score"],
     ["likes", "Likes"],
     ["comments", "Comments"],
     ["reposts", "Reposts"],
-    ["text", "Text"],
   ];
   const cell = (value) => {
     let text = Array.isArray(value) ? value.join("; ") : String(value ?? "");
@@ -354,6 +397,21 @@ function downloadFile(filename, content, type) {
 
 function bindFeedScanResultActions(state) {
   const posts = state?.posts || [];
+  $("#fs__retry_sheet_btn").click(function () {
+    $(this).prop("disabled", true).text("Saving…");
+    chrome.runtime.sendMessage(
+      { action: "bg-saveInvestmentPostsToSheet", posts },
+      async (response) => {
+        const sheetSync = chrome.runtime.lastError
+          ? { status: "error", error: chrome.runtime.lastError.message }
+          : { ...response, at: new Date().toISOString() };
+        // Writing the state re-renders the results via storage.onChanged.
+        await chrome.storage.local.set({
+          [FEED_SCAN_STORAGE_KEY]: { ...state, sheetSync },
+        });
+      },
+    );
+  });
   $("#fs__csv_btn").click(function () {
     trackPosthog("creator_extension_feed_scanner_exported", { env, count: posts.length });
     const date = new Date().toISOString().slice(0, 10);
@@ -435,11 +493,13 @@ async function startFeedScan() {
 
 async function renderFeedScanner() {
   document.body.classList.add("fs-wide");
-  const [settings, state, tab] = await Promise.all([
+  const [settings, state, tab, sheetItems] = await Promise.all([
     getFeedScanSettings(),
     getFeedScanState(),
     getActiveTab(),
+    chrome.storage.local.get([INVESTMENT_SHEET_URL_KEY]).catch(() => ({})),
   ]);
+  const sheetUrl = sheetItems?.[INVESTMENT_SHEET_URL_KEY] || "";
   const onLinkedIn = tab?.url?.startsWith("https://www.linkedin.com/");
   const maxPostOptions = [50, 100, 200, 300]
     .map(
@@ -462,12 +522,76 @@ async function renderFeedScanner() {
       </div>
       <input id="fs__keywords" class="fs-input" placeholder="Extra keywords, comma separated (e.g. zerodha, fintech)" value="${escapeHtml(settings.extraKeywords)}"/>
       <button id="fs__scan_btn" class="fs-primary-btn" data-idle-label="${onLinkedIn ? "Scan feed" : "Open LinkedIn feed"}"></button>
+      <div id="fs__sheet" class="fs-sheet"></div>
       <div id="fs__results" class="fs-results"></div>
     </div>`);
 
   $("#fs__back_btn").click(() => window.location.reload());
   $("#fs__scan_btn").click(startFeedScan);
+  renderSheetConnection(sheetUrl);
   updateFeedScanResults(state);
+}
+
+function renderSheetConnection(sheetUrl, editing = false) {
+  if (sheetUrl && !editing) {
+    $("#fs__sheet").html(`
+      <div class="fs-sheet-row">
+        <span>📄 Auto-saving to your Google Sheet</span>
+        <button id="fs__sheet_change_btn" class="fs-inline-btn">Change</button>
+      </div>`);
+    $("#fs__sheet_change_btn").click(() => renderSheetConnection(sheetUrl, true));
+    return;
+  }
+
+  $("#fs__sheet").html(`
+    <details class="fs-sheet-setup" ${sheetUrl ? "" : "open"}>
+      <summary>📄 Connect Google Sheet (auto-save after each scan)</summary>
+      <ol>
+        <li>Open your Google Sheet → <b>Extensions → Apps Script</b>.</li>
+        <li>Delete what's there and paste the script <button id="fs__copy_script_btn" class="fs-inline-btn">Copy script</button></li>
+        <li><b>Deploy → New deployment</b> → type <b>Web app</b>, execute as <b>Me</b>, access <b>Anyone</b> → Deploy, and allow access.</li>
+        <li>Paste the <b>Web app URL</b> here:</li>
+      </ol>
+      <div class="fs-sheet-row">
+        <input id="fs__sheet_url" class="fs-input" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeHtml(sheetUrl || "")}"/>
+        <button id="fs__sheet_connect_btn" class="fs-secondary-btn">Connect</button>
+      </div>
+      ${sheetUrl ? `<button id="fs__sheet_disconnect_btn" class="fs-inline-btn">Disconnect</button>` : ""}
+      <p id="fs__sheet_msg" class="fs-sheet-msg"></p>
+    </details>`);
+
+  $("#fs__copy_script_btn").click(async function () {
+    try {
+      const res = await fetch(chrome.runtime.getURL("google-sheets/Code.gs"));
+      await navigator.clipboard.writeText(await res.text());
+      $(this).text("Copied!");
+    } catch (error) {
+      $(this).text("Copy failed");
+    }
+  });
+
+  $("#fs__sheet_connect_btn").click(function () {
+    const url = $("#fs__sheet_url").val().trim();
+    const $btn = $(this).prop("disabled", true).text("Checking…");
+    $("#fs__sheet_msg").removeClass("fs-sync-error").text("");
+    chrome.runtime.sendMessage({ action: "bg-testInvestmentSheet", url }, async (response) => {
+      $btn.prop("disabled", false).text("Connect");
+      if (chrome.runtime.lastError || !response?.ok) {
+        $("#fs__sheet_msg")
+          .addClass("fs-sync-error")
+          .text(response?.error || chrome.runtime.lastError?.message || "Couldn't connect.");
+        return;
+      }
+      await chrome.storage.local.set({ [INVESTMENT_SHEET_URL_KEY]: url });
+      trackPosthog("creator_extension_feed_scanner_sheet_connected", { env });
+      renderSheetConnection(url);
+    });
+  });
+
+  $("#fs__sheet_disconnect_btn").click(async function () {
+    await chrome.storage.local.remove(INVESTMENT_SHEET_URL_KEY);
+    renderSheetConnection("");
+  });
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {

@@ -216,6 +216,63 @@
     }
   }
 
+  function postUrlFromId(activityId) {
+    return activityId
+      ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
+      : null;
+  }
+
+  // "imgprajapati" from https://www.linkedin.com/in/imgprajapati/
+  function publicIdFromUrl(url) {
+    const match = String(url || "").match(
+      /linkedin\.com\/(?:in|company|school|showcase)\/([^/?#]+)/i,
+    );
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (error) {
+      return match[1];
+    }
+  }
+
+  function isProfileUrl(url) {
+    return Boolean(publicIdFromUrl(url));
+  }
+
+  // Links that belong to the post itself, i.e. not mentions or hashtags.
+  function normalizePostLink(raw) {
+    if (!raw) return null;
+    let value = String(raw)
+      .trim()
+      .replace(/[)\]}>.,!?;:'"…]+$/, "");
+    if (/^lnkd\.in\//i.test(value)) value = `https://${value}`;
+    try {
+      const url = new URL(value);
+      if (!/^https?:$/.test(url.protocol)) return null;
+      if (/(^|\.)linkedin\.com$/i.test(url.hostname)) {
+        if (
+          isProfileUrl(url.href) ||
+          /^\/(?:feed\/hashtag|search|mynetwork|messaging)\b/i.test(url.pathname)
+        ) {
+          return null;
+        }
+        url.searchParams.delete("trackingId");
+        url.searchParams.delete("miniProfileUrn");
+      }
+      return url.href;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function uniqueLinks(links) {
+    return [...new Set(links.map(normalizePostLink).filter(Boolean))];
+  }
+
+  function extractUrlsFromText(text) {
+    return String(text || "").match(/(?:https?:\/\/|lnkd\.in\/)[^\s<>"']+/gi) || [];
+  }
+
   // ---------------------------------------------------------------------------
   // Voyager API source
   // ---------------------------------------------------------------------------
@@ -245,51 +302,170 @@
     );
   }
 
+  function personFromMiniProfile(mini) {
+    const publicId = mini?.publicIdentifier || "";
+    return {
+      name: [mini?.firstName, mini?.lastName].filter(Boolean).join(" "),
+      publicId,
+      urn: mini?.objectUrn || "",
+      url: publicId ? `https://www.linkedin.com/in/${publicId}` : "",
+    };
+  }
+
+  function personFromMiniCompany(mini) {
+    const publicId = mini?.universalName || "";
+    return {
+      name: mini?.name || "",
+      publicId,
+      urn: mini?.objectUrn || "",
+      url: publicId ? `https://www.linkedin.com/company/${publicId}` : "",
+    };
+  }
+
+  function personFromAttributes(attributes) {
+    const attribute = (attributes || []).find(
+      (item) => item?.miniProfile || item?.miniCompany,
+    );
+    if (attribute?.miniProfile) return personFromMiniProfile(attribute.miniProfile);
+    if (attribute?.miniCompany) return personFromMiniCompany(attribute.miniCompany);
+    return null;
+  }
+
+  function parseApiActor(actor) {
+    const fromAttributes = personFromAttributes(actor?.name?.attributes);
+    const url =
+      cleanLinkedInUrl(actor?.navigationContext?.actionTarget) ||
+      fromAttributes?.url ||
+      "";
+    return {
+      name: actor?.name?.text || fromAttributes?.name || "",
+      publicId: fromAttributes?.publicId || publicIdFromUrl(url),
+      urn: actor?.urn || fromAttributes?.urn || "",
+      url,
+      headline: actor?.description?.text || "",
+      relativeTime: actor?.subDescription?.text?.split("•")?.[0]?.trim() || "",
+    };
+  }
+
+  // The line above a feed item, e.g. "Rahul Mehta reposted this" or
+  // "Priya Sharma likes this".
+  function parseApiHeader(header) {
+    const text = header?.text?.text?.trim() || "";
+    if (!text) return null;
+    const person = personFromAttributes([
+      ...(header?.text?.attributes || []),
+      ...(header?.image?.attributes || []),
+    ]);
+    const navigationUrl = cleanLinkedInUrl(header?.navigationContext?.actionTarget);
+    const url = person?.url || (isProfileUrl(navigationUrl) ? navigationUrl : "");
+    return {
+      text,
+      isRepost: /\breposted\b/i.test(text),
+      name: person?.name || text.split(/\s+reposted\b/i)[0].trim(),
+      publicId: person?.publicId || publicIdFromUrl(url),
+      urn: person?.urn || "",
+      url,
+    };
+  }
+
+  function getApiLinks(update) {
+    if (!update) return [];
+    const textView = update?.commentary?.text || {};
+    const links = [];
+
+    for (const attribute of textView.attributes || []) {
+      if (attribute?.type === "HYPERLINK") links.push(attribute.link || attribute.url);
+    }
+    for (const attribute of textView.attributesV2 || []) {
+      links.push(attribute?.detailData?.hyperlink?.url);
+    }
+    links.push(...extractUrlsFromText(textView.text));
+
+    const content = update?.content || {};
+    for (const component of [
+      content["com.linkedin.voyager.feed.render.ArticleComponent"],
+      content.articleComponent,
+      content["com.linkedin.voyager.feed.render.EventComponent"],
+      content.eventComponent,
+    ]) {
+      links.push(component?.navigationContext?.actionTarget);
+    }
+    return links;
+  }
+
   function parseFeedApiElement(update) {
     if (!update || typeof update !== "object") return null;
 
-    const urn = update?.updateMetadata?.urn || update?.entityUrn || "";
-    const activityId = getActivityId(urn) || getActivityId(update?.entityUrn);
-    const reshared = update?.resharedUpdate;
+    const reshared = update?.resharedUpdate || null;
+    // For a repost with the reposter's own comment, the original post is
+    // nested in resharedUpdate. A plain repost has no nesting and is marked
+    // only by the "X reposted this" header.
+    const original = reshared || update;
+    const header = parseApiHeader(update?.header);
 
-    const ownText = update?.commentary?.text?.text || "";
-    const resharedText = reshared?.commentary?.text?.text || "";
+    const postId =
+      getActivityId(original?.updateMetadata?.urn) ||
+      getActivityId(original?.entityUrn);
+    const author = parseApiActor(original?.actor);
+    const text = original?.commentary?.text?.text || "";
+
+    let reposter = null;
+    let repostComment = "";
+    let repostId = null;
+    if (reshared) {
+      reposter = parseApiActor(update?.actor);
+      repostComment = update?.commentary?.text?.text || "";
+      repostId =
+        getActivityId(update?.updateMetadata?.urn) ||
+        getActivityId(update?.entityUrn);
+    } else if (header?.isRepost) {
+      reposter = header;
+    }
+
     const attachmentText = [
-      getArticleTitle(update?.content),
-      getDocumentTitle(update?.content),
-      getArticleTitle(reshared?.content),
-      getDocumentTitle(reshared?.content),
+      getArticleTitle(original?.content),
+      getDocumentTitle(original?.content),
     ]
       .filter(Boolean)
       .join("\n");
-
-    const text = [ownText, resharedText, attachmentText]
+    const classifyText = [text, repostComment, attachmentText]
       .filter(Boolean)
       .join("\n\n");
-    if (!text.trim()) return null;
+    if (!classifyText.trim()) return null;
 
-    const actor = update?.actor || reshared?.actor || {};
-    const counts = update?.socialDetail?.totalSocialActivityCounts || {};
+    const counts = original?.socialDetail?.totalSocialActivityCounts || {};
 
     return {
-      id: activityId || urn,
-      activityId,
-      postUrl: activityId
-        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
-        : cleanLinkedInUrl(update?.socialContent?.shareUrl),
-      author: actor?.name?.text || "",
-      authorHeadline: actor?.description?.text || "",
-      authorUrl: cleanLinkedInUrl(actor?.navigationContext?.actionTarget),
-      feedContext: update?.header?.text?.text || "",
+      id: postId || repostId || hashText(classifyText),
+      postId: postId || repostId,
+      postUrl:
+        postUrlFromId(postId || repostId) ||
+        cleanLinkedInUrl(original?.socialContent?.shareUrl),
+      author: author.name,
+      authorPublicId: author.publicId,
+      authorUrn: author.urn,
+      authorUrl: author.url,
+      authorHeadline: author.headline,
+      postedAt: activityIdToIsoDate(postId),
+      relativeTime: author.relativeTime,
       text: truncate(text),
-      postedAt: activityIdToIsoDate(activityId),
-      relativeTime:
-        actor?.subDescription?.text?.split("•")?.[0]?.trim() || "",
+      repostedBy: reposter?.name || "",
+      repostedByPublicId: reposter?.publicId || "",
+      repostedByUrn: reposter?.urn || "",
+      repostedByUrl: reposter?.url || "",
+      repostedAt: activityIdToIsoDate(repostId),
+      repostComment: truncate(repostComment),
+      repostId,
+      repostUrl: postUrlFromId(repostId),
+      links: uniqueLinks([...getApiLinks(original), ...(reshared ? getApiLinks(update) : [])]),
+      feedContext: header?.text || "",
+      feedContextPersonUrl: header?.url || "",
       likes: counts?.numLikes ?? null,
       comments: counts?.numComments ?? null,
       reposts: counts?.numShares ?? null,
-      isRepost: Boolean(reshared),
+      isRepost: Boolean(reposter),
       isPromoted: isPromotedUpdate(update),
+      classifyText,
     };
   }
 
@@ -368,6 +544,9 @@
     "div.feed-shared-update-v2",
   ];
 
+  const DOM_RESHARED_SELECTOR =
+    ".feed-shared-update-v2__reshared-content, .update-components-mini-update-v2";
+
   const DOM_TEXT_SELECTORS = [
     ".update-components-text",
     ".feed-shared-update-v2__description",
@@ -375,11 +554,11 @@
     '[data-testid="expandable-text-box"]',
   ];
 
-  const DOM_AUTHOR_SELECTORS = [
-    '.update-components-actor__title span[aria-hidden="true"]',
-    ".update-components-actor__name",
-    ".feed-shared-actor__name",
-  ];
+  const DOM_ATTACHMENT_LINK_SELECTOR =
+    ".update-components-article a[href], .update-components-event a[href], .feed-shared-article a[href], .feed-shared-event a[href]";
+
+  const DOM_SEE_MORE_SELECTOR =
+    "button.feed-shared-inline-show-more-text__see-more-less-toggle, button.see-more";
 
   function hashText(text) {
     let hash = 0;
@@ -389,14 +568,82 @@
     return `dom-${(hash >>> 0).toString(36)}`;
   }
 
-  function firstText(root, selectors) {
-    for (const selector of selectors) {
-      const parts = [...root.querySelectorAll(selector)]
-        .map((el) => el.innerText?.trim())
+  function firstLine(text) {
+    return String(text || "").trim().split("\n")[0].trim();
+  }
+
+  // Elements matching `selector` inside `root`, ignoring those inside an
+  // element matching `excludeSelector` (used to keep a reposter's comment
+  // apart from the post they reposted).
+  function queryOwn(root, selector, excludeSelector) {
+    return [...root.querySelectorAll(selector)].filter((el) => {
+      if (!excludeSelector) return true;
+      const excluded = el.closest(excludeSelector);
+      return !excluded || !root.contains(excluded) || excluded === root;
+    });
+  }
+
+  function domText(root, excludeSelector) {
+    for (const selector of DOM_TEXT_SELECTORS) {
+      const parts = queryOwn(root, selector, excludeSelector)
+        .filter((el) => !el.parentElement?.closest(selector))
+        .map((el) => el.innerText?.trim().replace(/\s*…\s*(?:see )?more$/i, ""))
         .filter(Boolean);
       if (parts.length) return parts.join("\n\n");
     }
     return "";
+  }
+
+  function parseDomActor(root, excludeSelector) {
+    const actor = queryOwn(root, ".update-components-actor, .feed-shared-actor", excludeSelector)[0] || root;
+    const nameEl = actor.querySelector(
+      '.update-components-actor__title span[aria-hidden="true"], .update-components-actor__name, .feed-shared-actor__name',
+    );
+    const link = [...actor.querySelectorAll("a[href]")].find((a) => isProfileUrl(a.href));
+    const url = cleanLinkedInUrl(link?.href) || "";
+    return {
+      name: firstLine(nameEl?.innerText) || firstLine(link?.innerText),
+      publicId: publicIdFromUrl(url),
+      urn: "",
+      url,
+      headline: firstLine(
+        actor.querySelector(".update-components-actor__description, .feed-shared-actor__description")?.innerText,
+      ),
+      relativeTime:
+        actor
+          .querySelector(".update-components-actor__sub-description, .feed-shared-actor__sub-description")
+          ?.innerText?.split("•")?.[0]
+          ?.trim() || "",
+    };
+  }
+
+  function domLinks(root, excludeSelector) {
+    const links = [];
+    for (const selector of DOM_TEXT_SELECTORS) {
+      for (const textEl of queryOwn(root, selector, excludeSelector)) {
+        links.push(...[...textEl.querySelectorAll("a[href]")].map((a) => a.href));
+        links.push(...extractUrlsFromText(textEl.innerText));
+      }
+    }
+    links.push(
+      ...queryOwn(root, DOM_ATTACHMENT_LINK_SELECTOR, excludeSelector).map((a) => a.href),
+    );
+    return links;
+  }
+
+  function domActivityId(root, excludeSelector) {
+    const urnAttr = root.getAttribute("data-urn") || root.getAttribute("data-id") || "";
+    if (getActivityId(urnAttr)) return getActivityId(urnAttr);
+    const link = queryOwn(
+      root,
+      'a[href*="urn:li:activity:"], a[href*="urn%3Ali%3Aactivity%3A"]',
+      excludeSelector,
+    )[0];
+    try {
+      return getActivityId(decodeURIComponent(link?.getAttribute("href") || ""));
+    } catch (error) {
+      return null;
+    }
   }
 
   function findDomPostContainers() {
@@ -429,58 +676,98 @@
     return containers;
   }
 
+  async function expandSeeMore(containers) {
+    let clicked = 0;
+    for (const container of containers) {
+      for (const button of container.querySelectorAll(DOM_SEE_MORE_SELECTOR)) {
+        if (button.getAttribute("aria-expanded") === "true") continue;
+        if (!/more/i.test(button.innerText || button.getAttribute("aria-label") || "")) {
+          continue;
+        }
+        button.click();
+        clicked++;
+      }
+    }
+    if (clicked) await sleep(300);
+  }
+
   function parseDomPost(container) {
-    const urnAttr =
-      container.getAttribute("data-urn") ||
-      container.getAttribute("data-id") ||
-      "";
-    const postLink = container.querySelector(
-      'a[href*="urn:li:activity:"], a[href*="/feed/update/"], a[href*="/posts/"]',
-    );
-    const activityId =
-      getActivityId(urnAttr) ||
-      getActivityId(decodeURIComponent(postLink?.getAttribute("href") || ""));
+    const resharedEl = container.querySelector(DOM_RESHARED_SELECTOR);
+    const outerId = domActivityId(container, DOM_RESHARED_SELECTOR);
+    const headerEl = container.querySelector(".update-components-header, .feed-shared-header");
+    const headerText = headerEl?.innerText?.trim()?.replace(/\s+/g, " ") || "";
+    const headerLink = headerEl
+      ? [...headerEl.querySelectorAll("a[href]")].find((a) => isProfileUrl(a.href))
+      : null;
+    const headerUrl = cleanLinkedInUrl(headerLink?.href) || "";
 
-    const text = firstText(container, DOM_TEXT_SELECTORS) ||
-      container.innerText?.trim() ||
-      "";
-    if (!text) return null;
+    let original;
+    let reposter = null;
+    let repostComment = "";
+    let repostId = null;
+    let postId;
 
-    const authorLink = container.querySelector(
-      'a[href*="/in/"], a[href*="/company/"], a[href*="/school/"]',
-    );
-    const author =
-      firstText(container, DOM_AUTHOR_SELECTORS).split("\n")[0] ||
-      authorLink?.innerText?.trim()?.split("\n")[0] ||
-      "";
+    if (resharedEl) {
+      original = {
+        actor: parseDomActor(resharedEl),
+        text: domText(resharedEl),
+        links: domLinks(resharedEl),
+      };
+      reposter = parseDomActor(container, DOM_RESHARED_SELECTOR);
+      repostComment = domText(container, DOM_RESHARED_SELECTOR);
+      repostId = outerId;
+      // The original post's ID is not always in the DOM; fall back to the
+      // repost's ID so the row still has a Post ID.
+      postId = domActivityId(resharedEl) || outerId;
+    } else {
+      original = {
+        actor: parseDomActor(container),
+        text: domText(container) || container.innerText?.trim() || "",
+        links: domLinks(container),
+      };
+      postId = outerId;
+      if (/\breposted\b/i.test(headerText)) {
+        reposter = {
+          name: firstLine(headerLink?.innerText) || headerText.split(/\s+reposted\b/i)[0].trim(),
+          publicId: publicIdFromUrl(headerUrl),
+          urn: "",
+          url: headerUrl,
+        };
+      }
+    }
+
+    const classifyText = [original.text, repostComment].filter(Boolean).join("\n\n");
+    if (!classifyText.trim()) return null;
 
     return {
-      id: activityId || hashText(text),
-      activityId,
-      postUrl: activityId
-        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
-        : cleanLinkedInUrl(postLink?.href),
-      author,
-      authorHeadline:
-        container
-          .querySelector(".update-components-actor__description")
-          ?.innerText?.trim()
-          ?.split("\n")[0] || "",
-      authorUrl: cleanLinkedInUrl(authorLink?.href),
-      feedContext:
-        container
-          .querySelector(".update-components-header")
-          ?.innerText?.trim() || "",
-      text: truncate(text),
-      postedAt: activityIdToIsoDate(activityId),
-      relativeTime: "",
+      id: postId || hashText(classifyText),
+      postId,
+      postUrl: postUrlFromId(postId),
+      author: original.actor.name,
+      authorPublicId: original.actor.publicId,
+      authorUrn: "",
+      authorUrl: original.actor.url,
+      authorHeadline: original.actor.headline,
+      postedAt: activityIdToIsoDate(postId),
+      relativeTime: original.actor.relativeTime,
+      text: truncate(original.text),
+      repostedBy: reposter?.name || "",
+      repostedByPublicId: reposter?.publicId || "",
+      repostedByUrn: "",
+      repostedByUrl: reposter?.url || "",
+      repostedAt: activityIdToIsoDate(repostId),
+      repostComment: truncate(repostComment),
+      repostId,
+      repostUrl: postUrlFromId(repostId),
+      links: uniqueLinks([...original.links, ...(resharedEl ? domLinks(container, DOM_RESHARED_SELECTOR) : [])]),
+      feedContext: headerText,
+      feedContextPersonUrl: headerUrl,
       likes: null,
       comments: null,
       reposts: null,
-      isRepost: Boolean(
-        container.querySelector(".feed-shared-update-v2__reshared-content, .update-components-mini-update-v2"),
-      ),
+      isRepost: Boolean(reposter),
       isPromoted: /(?:^|\n)\s*Promoted\s*(?:\n|$)/.test(container.innerText || ""),
+      classifyText,
     };
   }
 
@@ -497,7 +784,9 @@
 
     while (posts.size < maxPosts && idleScrolls < DOM_MAX_IDLE_SCROLLS) {
       const before = posts.size;
-      for (const container of findDomPostContainers()) {
+      const containers = findDomPostContainers();
+      await expandSeeMore(containers);
+      for (const container of containers) {
         const post = parseDomPost(container);
         if (post && !posts.has(post.id)) posts.set(post.id, post);
       }
@@ -570,8 +859,8 @@
 
     const posts = rawPosts
       .filter((post) => includePromoted || !post.isPromoted)
-      .map((post) => {
-        const { isInvestment, score, matches } = classifyText(post.text, {
+      .map(({ classifyText: textToClassify, ...post }) => {
+        const { isInvestment, score, matches } = classifyText(textToClassify, {
           extraKeywords,
           minScore,
         });
@@ -590,7 +879,27 @@
       posts,
     };
     await saveScanState(result);
+
+    result.sheetSync = await saveToGoogleSheet(posts);
+    await saveScanState(result);
     return result;
+  }
+
+  // Sends the investment posts to the Google Sheet web app (through the
+  // background worker, which has the host permission for script.google.com).
+  async function saveToGoogleSheet(posts) {
+    const at = new Date().toISOString();
+    if (!posts.length) return { status: "skipped", reason: "No posts to save.", at };
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "bg-saveInvestmentPostsToSheet",
+        posts,
+      });
+      if (!response) throw new Error("No response from the extension background.");
+      return { ...response, at };
+    } catch (error) {
+      return { status: "error", error: error?.message || String(error), at };
+    }
   }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {

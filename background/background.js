@@ -817,8 +817,128 @@ async function handleFetchLatestPost() {
   return await getLatestPostOfUser(token);
 }
 
+// ---------------------------------------------------------------------------
+// Investment posts -> Google Sheet (Apps Script web app, see google-sheets/)
+// ---------------------------------------------------------------------------
+
+const INVESTMENT_SHEET_URL_KEY = "investmentSheetWebAppUrl";
+const INVESTMENT_SHEET_FIELDS = [
+  "postId",
+  "postUrl",
+  "author",
+  "authorPublicId",
+  "authorUrn",
+  "authorUrl",
+  "authorHeadline",
+  "postedAt",
+  "text",
+  "repostedBy",
+  "repostedByPublicId",
+  "repostedByUrn",
+  "repostedByUrl",
+  "repostedAt",
+  "repostComment",
+  "repostId",
+  "repostUrl",
+  "links",
+  "feedContext",
+  "feedContextPersonUrl",
+  "matches",
+  "score",
+  "likes",
+  "comments",
+  "reposts",
+];
+
+function isValidInvestmentSheetUrl(url) {
+  return /^https:\/\/script\.google\.com\/(?:a\/macros\/[^/]+|macros)\/s\/[\w-]+\/exec$/.test(
+    String(url || "").trim(),
+  );
+}
+
+async function callInvestmentSheet(url, init) {
+  const response = await fetch(url, {
+    ...init,
+    credentials: "include",
+    redirect: "follow",
+  });
+  const body = await response.text();
+  let data = null;
+  try {
+    data = JSON.parse(body);
+  } catch (error) {
+    // Apps Script answers with an HTML page when the deployment isn't
+    // reachable (wrong access setting, deleted deployment, ...).
+  }
+  if (!response.ok || !data) {
+    throw new Error(
+      `Google Sheet web app didn't answer as expected (HTTP ${response.status}). Check that it is deployed with access set to "Anyone".`,
+    );
+  }
+  if (!data.ok) throw new Error(data.error || "Google Sheet web app reported an error.");
+  return data;
+}
+
+async function testInvestmentSheet(url) {
+  if (!isValidInvestmentSheetUrl(url)) {
+    throw new Error(
+      "That doesn't look like an Apps Script web app URL (https://script.google.com/macros/s/.../exec).",
+    );
+  }
+  return callInvestmentSheet(url.trim(), { method: "GET" });
+}
+
+async function saveInvestmentPostsToSheet(posts) {
+  const items = await chrome.storage.local.get([INVESTMENT_SHEET_URL_KEY]);
+  const url = items?.[INVESTMENT_SHEET_URL_KEY];
+  if (!url) {
+    return {
+      status: "not-configured",
+      error: "Connect a Google Sheet to save posts automatically.",
+    };
+  }
+
+  const rows = (Array.isArray(posts) ? posts : []).map((post) =>
+    Object.fromEntries(
+      INVESTMENT_SHEET_FIELDS.map((field) => [field, post?.[field] ?? null]),
+    ),
+  );
+  const withId = rows.filter((row) => row.postId);
+
+  const data = await callInvestmentSheet(url, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ posts: withId }),
+  });
+  return {
+    status: "saved",
+    inserted: data.inserted ?? 0,
+    skipped: data.skipped ?? 0,
+    missingId: rows.length - withId.length,
+    sheet: data.sheet || "",
+  };
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log("Message received:", request);
+
+  if (request?.action === "bg-saveInvestmentPostsToSheet") {
+    saveInvestmentPostsToSheet(request?.posts)
+      .then(sendResponse)
+      .catch((error) =>
+        sendResponse({ status: "error", error: error?.message || String(error) }),
+      );
+    return true;
+  }
+
+  if (request?.action === "bg-testInvestmentSheet") {
+    testInvestmentSheet(request?.url)
+      .then((data) => sendResponse({ ok: true, sheet: data.sheet || "" }))
+      .catch((error) =>
+        sendResponse({ ok: false, error: error?.message || String(error) }),
+      );
+    return true;
+  }
 
   if (request?.action === "bg-affiliate-post-sync-trigger") {
     return handleAffiliatePostSyncTrigger(

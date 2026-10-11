@@ -54,7 +54,9 @@
     "https://dev.anchors.pro/*",
     "https://eu.i.posthog.com/*",
     "https://partners.anchors.in/*",
-    "https://*.anchors.in/*"
+    "https://*.anchors.in/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
   ],
   "externally_connectable": {
     "matches": [
