@@ -1,0 +1,149 @@
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        #gp__overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background-color: #171717;
+            color: white;
+            z-index: 1000000;
+        }
+
+        #gp__overlay .gp__container {
+            margin-left: auto;
+            margin-right: auto;
+            max-width: 1440px;
+            height: 100%;
+            position: relative;
+        }
+
+        #gp__overlay .gp__header {
+            padding: 13px 40px;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: calc(100% - 17px);
+            background-color: #171717;
+            z-index: 1000001;
+            box-sizing: border-box;
+        }
+
+        #gp__overlay .gp__header img {
+            height: 32px;
+        }
+
+        #gp__overlay .gp__main {
+            padding: 0 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+        }
+
+        #gp__overlay .gp__percentage_container {
+            display: inline-flex;
+            height: 80px;
+            width: 80px;
+            padding: 24px;
+            justify-content: center;
+            align-items: center;
+            flex-shrink: 0;
+            border-radius: 100%;
+            border: 5px solid #6D6D6D;
+        }
+
+        #gp__overlay #gp__overlay_percentage {
+            color: #FFF;
+            font-size: 16px;
+            font-style: normal;
+            font-weight: 700;
+            line-height: normal;
+        }
+
+        #gp__overlay #gp__overlay_message {
+            all: unset;
+            text-align: center;
+            color: #FFF;
+            font-size: 16px;
+            font-style: normal;
+            font-weight: 600;
+            line-height: normal;
+            padding-top: 20px;
+            padding-bottom: 8px;
+        }
+
+        #gp__overlay #gp__overlay_description {
+            all: unset;
+            text-align: center;
+            color: #A3A3A3;
+            font-size: 14px;
+            font-style: normal;
+            font-weight: 400;
+            line-height: normal;
+            text-align: center;
+        }
+
+        #gp__overlay .gp__warning {
+            all: unset;
+            color: #EF9645;
+            font-size: 12px;
+            font-style: normal;
+            font-weight: 400;
+            line-height: normal;
+            text-transform: uppercase;
+            padding-top: 80px;
+            text-align: center;
+        }
+
+        #gp__overlay .gp__blinking-dots span {
+            display: inline-block;
+            animation: gp__blink 1.5s infinite ease-in-out;
+        }
+
+        #gp__overlay .gp__blinking-dots span:nth-child(2) {
+            animation-delay: 0.3s;
+        }
+
+        #gp__overlay .gp__blinking-dots span:nth-child(3) {
+            animation-delay: 0.6s;
+        }
+
+        @keyframes gp__blink {
+
+            0%,
+            40% {
+                opacity: 1;
+            }
+
+            41%,
+            100% {
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="gp__overlay">
+        <div class="gp__container">
+            <div class="gp__header"> <img src="${COLLAB_SERVER}/api/file/proxyImage?imageUrl=${encodeURIComponent("
+                    https://anchors-collab.s3.ap-south-1.amazonaws.com/assets/Collab+White+Logo.svg")}" alt=""> </div>
+            <div class="gp__main">
+                <div class="gp__percentage_container">
+                    <div id="gp__overlay_percentage"> ${percentage} </div>
+                </div> <span id="gp__overlay_message"> ${message} </span>
+                <p id="gp__overlay_description"> ${description} </p>
+                <p class="gp__warning"> PLEASE DO NOT SWITCH TABS, CLOSE OR REFRESH THIS WINDOW
+                </br> ALSO, DO NOT CLICK ON THE SCREEN WHILE THE SYNC IS ON </p>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

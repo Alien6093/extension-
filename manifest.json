@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "dev: anchors: LinkedIn Profile Pro (for creators)",
+  "version": "1.1.35",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAkXdQ7G4H391o89x8Nu6/1fyyFa7fyfopkdO25D+U9MDbgx7O1IgoGb4LR+tEGEKdILW9/vLnNFcPZp6qYte+dL10igTL38rf4urrjZX+9cTbpgAchNWdlFYQhktBZknPx+kd38rukDAp1zyIRkgNVrjizV3981qr2n4UCuzY7famDflLNZuTCfKfOWy75Suwnx83Sr88Ozn8ClDxemLjGzHn4zNm8wkNytw7yfCBUG9pIuu3aV68OAssFcFg0L/VfGk19kRjAAvuZpwmCdkTd/A3u/RwDOSa1ui7IsogjSMiewGPG8nE6+MO4EcdoAdrFoUPQ+G+rK09VFDzUFmKQwIDAQAB",
+  "description": "Your personal companion that offers smart analysis of your LinkedIn profiles & creates custom media kits",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "dev: anchors: LinkedIn Profile Pro (for creators)"
+  },
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
+      "js": [
+        "lib/posthog.js",
+        "content/content-script.js"
+      ]
+    },
+    {
+      "matches": [
+        "https://dev.anchors.pro/*"
+      ],
+      "js": [
+        "lib/posthog.js",
+        "content/auth-script.js"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background/background.js"
+  },
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://dev.anchors.pro/*",
+    "https://eu.i.posthog.com/*",
+    "https://partners.anchors.in/*",
+    "https://*.anchors.in/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://dev.anchors.pro/*",
+      "https://*.anchors.in/*"
+    ]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "assets/icons/logo.svg"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}
