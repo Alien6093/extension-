@@ -6,6 +6,8 @@ let COLLAB_SERVER = "https://dev.anchors.pro/api";
 // let COLLAB_CLIENT = "https://www.anchors.in";
 // let COLLAB_SERVER = "https://www.anchors.in/api";
 
+const GET_USER_TIMEOUT_MS = 10000;
+
 const config = {
   JWTTOKEN: "jwtToken",
   USERTYPE: "UserType",
@@ -25,8 +27,10 @@ const trackPosthog = (event, properties = {}) => {
 function checkActiveTabUrl() {
   try {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
-      const url = activeTab.url;
+      const activeTab = tabs?.[0];
+      // Chrome leaves `url` undefined when the extension has no access to
+      // the tab; that used to throw here and leave the popup on "Loading...".
+      const url = activeTab?.url || "";
       if (url.includes(`${COLLAB_CLIENT}/influencer`)) {
         chrome.runtime.sendMessage(
           { action: "bg-retrieveToken", tabId: activeTab?.id },
@@ -43,7 +47,7 @@ function checkActiveTabUrl() {
       }
     });
   } catch (error) {
-    renderLoading();
+    renderLogin();
   }
 }
 
@@ -57,12 +61,15 @@ async function getUser() {
       return null;
     }
 
+    // Without a timeout a server that never answers leaves the popup on
+    // "Loading..." forever.
     const response = await fetch(`${COLLAB_SERVER}/ext/getUser`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
         Jwttoken: token,
       },
+      signal: AbortSignal.timeout(GET_USER_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -101,8 +108,15 @@ $(document).ready(async function () {
   }
 });
 
+// The start-up checks can finish after the user already opened the
+// investment-posts screen from the loading screen; don't replace it then.
+function isFeedScannerOpen() {
+  return Boolean(document.getElementById("fs__results"));
+}
+
 async function renderWelcome() {
   getUser().then(async (res) => {
+    if (isFeedScannerOpen()) return;
     if (res && res?.success) {
       if (res?.logout) {
         await chrome.storage.local.remove([config.JWTTOKEN, config.USERTYPE]);
@@ -142,6 +156,7 @@ async function renderWelcome() {
 }
 
 function renderLogin() {
+  if (isFeedScannerOpen()) return;
   trackPosthog("creator_extension_login_rendered", { env });
   $("#root").html(
     `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Hi, <br /> Welcome to anchors, </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Make sure your media is upto date! </p> <div> <button id="gp__login_btn" class="flex px-[16px] py-[8px] items-center gap-[10px] rounded-[6px] bg-[#DC2627]"> <span class="text-[#FFF] text-[14px] not-italic font-medium leading-[24px]"> Login to Continue </span> </button> </div> ${feedScannerEntryHtml()} </div> </div>`,
@@ -155,8 +170,9 @@ function renderLogin() {
 
 function renderLoading() {
   $("#root").html(
-    `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Loading... </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Hold on! </p> </div> </div>`,
+    `<div class="h-full w-full bg-[#171717] text-white/70 grid place-items-center"> <div class="flex flex-col justify-center items-center text-center"> <span class="text-[30px]">🚀</span> <h1 class="text-[#FFF] text-center font-inter text-[16px] not-italic font-semibold leading-[normal]"> Loading... </h1> <p class="text-[#A3A3A3] text-center font-inter text-[14px] not-italic font-normal leading-[normal] mt-2 mb-5"> Hold on! </p> ${feedScannerEntryHtml()} </div> </div>`,
   );
+  bindFeedScannerEntry();
 }
 
 // ---------------------------------------------------------------------------
