@@ -57,7 +57,8 @@
     "https://partners.anchors.in/*",
     "https://*.anchors.in/*",
     "https://script.google.com/*",
-    "https://script.googleusercontent.com/*"
+    "https://script.googleusercontent.com/*",
+    "https://lnkd.in/*"
   ],
   "externally_connectable": {
     "matches": [

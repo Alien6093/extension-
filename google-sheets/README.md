@@ -43,3 +43,14 @@ deployments → Edit → Version: New version**. This keeps the same URL.
 | Matched keywords, Score | The investment keywords that matched and the relevance score. |
 | Likes, Comments, Reposts | Counts for the original post at the time of the scan. |
 | Saved at | When the row was added. |
+| Category | Funding opportunity, Form / application (check), Grants & competitions, Funding news, Markets & personal finance, Fundraising & VC insights, or Custom keyword match. |
+| Form / application links | Links to Google Forms, Typeform, Tally, Airtable, Jotform, F6S etc. found in the post, including ones hidden behind lnkd.in short links. |
+| Why kept | The category, total score and every rule that added points. |
+
+## Updating from the first version (30 columns)
+
+Version 2 of `Code.gs` adds the Category, Form / application links and Why
+kept columns. Paste the new `Code.gs` over the old one, save, then
+**Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**. The
+web app URL stays the same. On the next save, the three new headers are added
+after "Saved at" in your existing sheet; existing rows are left as they are.

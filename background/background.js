@@ -848,6 +848,9 @@ const INVESTMENT_SHEET_FIELDS = [
   "likes",
   "comments",
   "reposts",
+  "category",
+  "formLinks",
+  "whyKept",
 ];
 
 function isValidInvestmentSheetUrl(url) {
@@ -877,6 +880,57 @@ async function callInvestmentSheet(url, init) {
   }
   if (!data.ok) throw new Error(data.error || "Google Sheet web app reported an error.");
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// lnkd.in short links -> real destination
+// ---------------------------------------------------------------------------
+
+const SHORT_LINK_TIMEOUT_MS = 8000;
+const SHORT_LINK_CONCURRENCY = 4;
+
+function decodeHtmlAttribute(value) {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&#x27;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+// lnkd.in answers with a "you're leaving LinkedIn" page whose external link
+// is the real destination.
+async function resolveShortLink(url) {
+  if (!/^https:\/\/lnkd\.in\/[\w-]+\/?$/i.test(url)) return null;
+  try {
+    const response = await fetch(url, {
+      credentials: "omit",
+      signal: AbortSignal.timeout(SHORT_LINK_TIMEOUT_MS),
+    });
+    if (!/^https:\/\/lnkd\.in\//i.test(response.url)) return response.url;
+    const html = await response.text();
+    const anchor = html.match(
+      /<a\b[^>]*data-tracking-control-name="external_url_click"[^>]*>/i,
+    )?.[0];
+    const href = anchor?.match(/\bhref="([^"]+)"/i)?.[1];
+    return href ? decodeHtmlAttribute(href) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function resolveShortLinks(urls) {
+  const queue = [...new Set(Array.isArray(urls) ? urls : [])];
+  const resolved = {};
+  const worker = async () => {
+    while (queue.length) {
+      const url = queue.shift();
+      const destination = await resolveShortLink(url);
+      if (destination) resolved[url] = destination;
+    }
+  };
+  await Promise.all(Array.from({ length: SHORT_LINK_CONCURRENCY }, worker));
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +1034,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch((error) =>
         sendResponse({ status: "error", error: error?.message || String(error) }),
       );
+    return true;
+  }
+
+  if (request?.action === "bg-resolveShortLinks") {
+    resolveShortLinks(request?.urls)
+      .then((resolved) => sendResponse({ resolved }))
+      .catch(() => sendResponse({ resolved: {} }));
     return true;
   }
 

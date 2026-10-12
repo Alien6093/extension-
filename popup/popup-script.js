@@ -268,6 +268,52 @@ function formatPostDate(post) {
   return post?.relativeTime || "";
 }
 
+const CATEGORY_CLASSES = {
+  "Funding opportunity": "fs-cat-opportunity",
+  "Form / application (check)": "fs-cat-form",
+  "Grants & competitions": "fs-cat-grant",
+  "Funding news": "fs-cat-news",
+  "Markets & personal finance": "fs-cat-markets",
+  "Fundraising & VC insights": "fs-cat-insights",
+};
+
+function categoryClass(category) {
+  return CATEGORY_CLASSES[category] || "fs-cat-other";
+}
+
+function formLinksHtml(links) {
+  const safe = (links || []).map((link) => {
+    try {
+      const url = new URL(link);
+      return /^https?:$/.test(url.protocol) ? url.href : "";
+    } catch (error) {
+      return "";
+    }
+  }).filter(Boolean);
+  if (!safe.length) return "";
+  return `<div class="fs-form-links">📝 ${safe
+    .map((url) => `<a href="${escapeHtml(url)}" target="_blank">${escapeHtml(new URL(url).hostname)}</a>`)
+    .join(" · ")}</div>`;
+}
+
+function categoryCountsHtml(posts) {
+  const counts = {};
+  for (const post of posts) {
+    if (post.category) counts[post.category] = (counts[post.category] || 0) + 1;
+  }
+  const order = Object.keys(CATEGORY_CLASSES);
+  const entries = Object.entries(counts).sort(
+    ([a], [b]) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99),
+  );
+  if (!entries.length) return "";
+  return `<div class="fs-chips">${entries
+    .map(
+      ([category, count]) =>
+        `<span class="fs-category ${categoryClass(category)}">${escapeHtml(category)}: ${count}</span>`,
+    )
+    .join("")}</div>`;
+}
+
 function feedPostCardHtml(post) {
   const postUrl = safeLinkedInUrl(post.postUrl);
   const authorUrl = safeLinkedInUrl(post.authorUrl);
@@ -285,13 +331,14 @@ function feedPostCardHtml(post) {
   const author = escapeHtml(post.author || "Unknown author");
   return `
     <div class="fs-card">
+      ${post.category ? `<span class="fs-category ${categoryClass(post.category)}">${escapeHtml(post.category)}</span>` : ""}
       <div class="fs-card-head">
         ${
           authorUrl
             ? `<a class="fs-author" href="${escapeHtml(authorUrl)}" target="_blank">${author}</a>`
             : `<span class="fs-author">${author}</span>`
         }
-        <span class="fs-score" title="Relevance score">${escapeHtml(post.score)}</span>
+        <span class="fs-score" title="${escapeHtml(post.whyKept || "Relevance score")}">${escapeHtml(post.score)}</span>
       </div>
       ${post.authorHeadline ? `<div class="fs-headline">${escapeHtml(post.authorHeadline)}</div>` : ""}
       ${
@@ -304,7 +351,8 @@ function feedPostCardHtml(post) {
             : ""
       }
       <div class="fs-snippet">${escapeHtml(snippet)}</div>
-      <div class="fs-chips">${post.matches
+      ${formLinksHtml(post.formLinks)}
+      <div class="fs-chips">${(post.matches || [])
         .map((match) => `<span class="fs-chip">${escapeHtml(match)}</span>`)
         .join("")}</div>
       <div class="fs-card-foot">
@@ -336,6 +384,7 @@ function feedScanResultsHtml(state) {
   }
   return `
     ${summary}
+    ${categoryCountsHtml(posts)}
     ${historySyncHtml(state.historySync)}
     ${sheetSyncHtml(state.sheetSync)}
     <div class="fs-actions">
@@ -407,6 +456,9 @@ const CSV_COLUMNS = [
   ["comments", "Comments"],
   ["reposts", "Reposts"],
   ["savedAt", "Saved at", "date"],
+  ["category", "Category"],
+  ["formLinks", "Form / application links", "lines"],
+  ["whyKept", "Why kept"],
 ];
 
 // "2026-10-11 15:30" in local time: Excel and Google Sheets both read this as
@@ -421,7 +473,7 @@ function formatCsvDate(value) {
 function csvCell(value, type) {
   if (value === null || value === undefined || value === "") return "";
   if (type === "date") value = formatCsvDate(value);
-  let text = Array.isArray(value) ? value.join(", ") : String(value);
+  let text = Array.isArray(value) ? value.join(type === "lines" ? "\n" : ", ") : String(value);
   if (type === "id") {
     // 19-digit IDs: Excel would show 7.38E+18 and drop digits, so make
     // spreadsheet apps keep them as text.

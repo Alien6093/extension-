@@ -820,3 +820,57 @@ a.fs-author:hover,
     opacity: .5;
     cursor: default
 }
+
+.fs-category {
+    align-self: flex-start;
+    border-radius: 9999px;
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 18px;
+    font-weight: 600
+}
+
+.fs-cat-opportunity {
+    background: #14532d;
+    color: #86efac
+}
+
+.fs-cat-form {
+    background: #713f12;
+    color: #fde68a
+}
+
+.fs-cat-grant {
+    background: #4c1d95;
+    color: #ddd6fe
+}
+
+.fs-cat-news {
+    background: #1e3a8a;
+    color: #bfdbfe
+}
+
+.fs-cat-markets {
+    background: #134e4a;
+    color: #99f6e4
+}
+
+.fs-cat-insights,
+.fs-cat-other {
+    background: #3f3f46;
+    color: #e4e4e7
+}
+
+.fs-form-links {
+    font-size: 12px;
+    color: #fde68a
+}
+
+.fs-form-links a {
+    color: #fde68a;
+    text-decoration: underline
+}
+
+.fs-score {
+    cursor: help
+}

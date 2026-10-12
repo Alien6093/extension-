@@ -45,6 +45,10 @@ var COLUMNS = [
     ["Comments", "comments", "number"],
     ["Reposts", "reposts", "number"],
     ["Saved at", "savedAt", "date"],
+    // Added in v2. Older sheets get these headers appended automatically.
+    ["Category", "category", "text"],
+    ["Form / application links", "formLinks", "text"],
+    ["Why kept", "whyKept", "text"],
   ]);
 
 var HEADERS = COLUMNS.map(function (column) {
@@ -137,9 +141,22 @@ function ensureHeaders(sheet) {
     return null;
   }
 
-  var matches = HEADERS.every(function (header, index) {
-    return current[index] === header;
+  // Row 1 may hold the headers of an older version of this script (fewer
+  // columns). If so, add the missing headers after them.
+  var known = 0;
+  while (known < HEADERS.length && current[known] === HEADERS[known]) known++;
+  var restEmpty = current.slice(known).every(function (cell) {
+    return cell === "";
   });
+  if (known > 0 && known < HEADERS.length && restEmpty) {
+    sheet
+      .getRange(1, known + 1, 1, HEADERS.length - known)
+      .setValues([HEADERS.slice(known)])
+      .setFontWeight("bold");
+    return null;
+  }
+
+  var matches = known === HEADERS.length;
   if (!matches) {
     return (
       'The first tab "' +
@@ -159,6 +176,7 @@ function toRow(post, savedAt) {
       i === MAX_LINK_COLUMNS - 1 ? links.slice(i).join("\n") : links[i] || "";
   }
   values.matches = Array.isArray(post.matches) ? post.matches.join(", ") : post.matches;
+  values.formLinks = Array.isArray(post.formLinks) ? post.formLinks.join("\n") : post.formLinks;
   values.savedAt = savedAt;
 
   return COLUMNS.map(function (column) {

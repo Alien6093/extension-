@@ -23,147 +23,320 @@
   const DOM_MAX_IDLE_SCROLLS = 4;
   const DEFAULT_MIN_SCORE = 3;
 
-  // weight 3: almost always about investing on its own
-  // weight 2: strong signal, occasionally used in other contexts
-  // weight 1: ambiguous on its own ("portfolio", "exit"), only counts together
-  //           with other signals
-  const INVESTMENT_KEYWORDS = [
-    // general
-    { term: "invest", weight: 2, pattern: "invest(?:s|ed)?" },
-    { term: "investing", weight: 3, pattern: "investing|investments?|investors?" },
-    { term: "investment thesis", weight: 3 },
-    { term: "wealth creation", weight: 3 },
-    { term: "wealth management", weight: 3 },
-    { term: "asset management", weight: 3 },
-    { term: "asset allocation", weight: 3 },
-    { term: "financial planning", weight: 2 },
-    { term: "financial freedom", weight: 2 },
-    { term: "passive income", weight: 2 },
-    { term: "compounding", weight: 2 },
-    { term: "returns", weight: 1 },
-    { term: "portfolio", weight: 1 },
-    { term: "capital", weight: 1 },
-    { term: "diversification", weight: 1, pattern: "diversif(?:y|ied|ication)" },
-    { term: "risk appetite", weight: 2 },
-    { term: "CAGR", weight: 2, caseSensitive: true },
-    { term: "ROI", weight: 1, caseSensitive: true },
+  // ---------------------------------------------------------------------------
+  // Classifier
+  //
+  // Every rule belongs to a category and adds `weight` points to it when its
+  // pattern is found in the post (each rule counts once). A post is kept when:
+  //   - its "Funding opportunity" points reach MIN_SCORE, or
+  //   - it has a form link / "fill this form" AND talks about founders,
+  //     startups or funding (the form rule), or
+  //   - its points across all categories reach MIN_SCORE.
+  // An investor headline ("Angel investor", "Partner @ X Ventures") adds
+  // HEADLINE_POINTS, which is never enough on its own.
+  // ---------------------------------------------------------------------------
 
-    // startup funding / VC / PE
-    { term: "venture capital", weight: 3 },
-    { term: "VC", weight: 2, pattern: "VCs?", caseSensitive: true },
-    { term: "angel investor", weight: 3, pattern: "angel (?:investor|investors|investing|round)" },
-    { term: "private equity", weight: 3 },
-    { term: "hedge fund", weight: 3, pattern: "hedge funds?" },
-    { term: "family office", weight: 2, pattern: "family offices?" },
-    { term: "limited partner", weight: 3, pattern: "limited partners?|LPs", caseSensitive: false },
-    { term: "pre-seed", weight: 3, pattern: "pre[- ]seed" },
-    { term: "seed round", weight: 3, pattern: "seed (?:round|funding|stage|investment)" },
-    { term: "Series A-F", weight: 3, pattern: "series [a-f](?: round| funding)?" },
-    { term: "funding round", weight: 3, pattern: "funding rounds?" },
-    { term: "raised funding", weight: 3, pattern: "raised (?:(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs)?|[\\d.,]+\\s?(?:m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs))" },
-    { term: "fundraise", weight: 2, pattern: "fund ?rais(?:e|es|ed|ing)" },
-    { term: "term sheet", weight: 3, pattern: "term ?sheets?" },
-    { term: "valuation", weight: 2, pattern: "valuations?" },
-    { term: "cap table", weight: 3 },
-    { term: "dilution", weight: 1 },
-    { term: "unicorn", weight: 1, pattern: "unicorns?" },
-    { term: "AUM", weight: 3, caseSensitive: true },
-    { term: "dry powder", weight: 3 },
-    { term: "IPO", weight: 3, pattern: "IPOs?", caseSensitive: true },
-    { term: "pre-IPO", weight: 3, pattern: "pre-IPO", caseSensitive: true },
-    { term: "acquisition", weight: 1, pattern: "acquisitions?|acquired" },
-    { term: "M&A", weight: 2, pattern: "M&A", caseSensitive: true },
-    { term: "exit", weight: 1, pattern: "exits?" },
-    { term: "portfolio company", weight: 3, pattern: "portfolio compan(?:y|ies)" },
-    { term: "fund", weight: 1, pattern: "funds?" },
-    { term: "Fund I-V", weight: 3, pattern: "fund (?:I|II|III|IV|V|VI|1|2|3|4|5)\\b", caseSensitive: false },
-    { term: "due diligence", weight: 2 },
+  const CATEGORY = {
+    OPPORTUNITY: "Funding opportunity",
+    FORM: "Form / application (check)",
+    GRANT: "Grants & competitions",
+    NEWS: "Funding news",
+    MARKETS: "Markets & personal finance",
+    INSIGHTS: "Fundraising & VC insights",
+    CUSTOM: "Custom keyword match",
+  };
 
-    // public markets
-    { term: "stock market", weight: 3, pattern: "stock ?markets?|share ?markets?" },
-    { term: "stocks", weight: 2, pattern: "stocks|equities|equity markets?" },
-    { term: "mutual fund", weight: 3, pattern: "mutual funds?" },
-    { term: "index fund", weight: 3, pattern: "index funds?" },
-    { term: "ETF", weight: 3, pattern: "ETFs?", caseSensitive: true },
-    { term: "SIP", weight: 3, pattern: "SIPs?", caseSensitive: true },
-    { term: "dividend", weight: 2, pattern: "dividends?" },
-    { term: "bonds", weight: 2, pattern: "bonds|fixed income|treasury yields?" },
-    { term: "bull/bear market", weight: 3, pattern: "(?:bull|bear) (?:market|run|rally)" },
-    { term: "market cap", weight: 2, pattern: "market cap(?:italisation|italization)?" },
-    { term: "P/E ratio", weight: 3, pattern: "P/E|PE ratio", caseSensitive: true },
-    { term: "Nifty", weight: 3, pattern: "Nifty(?: ?50)?", caseSensitive: true },
-    { term: "Sensex", weight: 3 },
-    { term: "NSE/BSE", weight: 2, pattern: "NSE|BSE", caseSensitive: true },
-    { term: "SEBI", weight: 2, caseSensitive: true },
-    { term: "S&P 500", weight: 3, pattern: "S&P ?500" },
-    { term: "Nasdaq", weight: 3 },
-    { term: "Dow Jones", weight: 3 },
-    { term: "Wall Street", weight: 2 },
-    { term: "Warren Buffett", weight: 2, pattern: "buffett|berkshire" },
-    { term: "trading", weight: 1, pattern: "trading|traders?" },
-    { term: "options trading", weight: 3, pattern: "options trading|F&O|futures and options" },
-    { term: "demat", weight: 3 },
-    { term: "PMS", weight: 2, caseSensitive: true },
-    { term: "AIF", weight: 3, pattern: "AIFs?", caseSensitive: true },
-    { term: "REIT", weight: 3, pattern: "REITs?", caseSensitive: true },
-
-    // crypto
-    { term: "crypto", weight: 2, pattern: "crypto(?:currency|currencies)?" },
-    { term: "bitcoin", weight: 2, pattern: "bitcoin|BTC" },
-    { term: "ethereum", weight: 2 },
-
-    // real estate / alternatives
-    { term: "real estate investing", weight: 3, pattern: "real estate (?:investing|investment|investor)s?" },
-    { term: "rental yield", weight: 3, pattern: "rental yields?" },
-    { term: "gold", weight: 1, pattern: "gold (?:etf|bonds?|prices?)|sovereign gold" },
+  // Order used to sort results and to break ties between categories.
+  const CATEGORY_PRIORITY = [
+    CATEGORY.OPPORTUNITY,
+    CATEGORY.FORM,
+    CATEGORY.GRANT,
+    CATEGORY.NEWS,
+    CATEGORY.MARKETS,
+    CATEGORY.INSIGHTS,
+    CATEGORY.CUSTOM,
   ];
 
-  const compiledKeywordsCache = new Map();
+  const HEADLINE_POINTS = 2;
+
+  // weight 3: enough on its own
+  // weight 2: strong signal, needs one more
+  // weight 1: common word, only counts together with others
+  const RULES = [
+    // --- Funding opportunity: investors asking for startups -----------------
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "asks for your deck", pattern: "(?:dm|send|share|email|mail|drop|inbox)\\s+(?:me|us)?\\s*(?:your|ur|the)?\\s*(?:pitch\\s*)?decks?" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "share your deck", pattern: "(?:share|send|submit|drop)\\s+(?:your|ur)\\s+(?:pitch\\s*)?(?:deck|pitch)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "pitch to us", pattern: "pitch\\s+(?:to\\s+)?(?:me|us)\\b" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "accepting pitches", pattern: "(?:accepting|open\\s+(?:to|for))\\s+(?:pitch(?:es)?|decks|applications)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "founders raising", pattern: "(?:founders?|startups?)\\s+(?:(?:[\\w&/-]+\\s+){0,4}?(?:who|that)\\s+(?:are|r)\\s+)?(?:currently\\s+|actively\\s+)?raising" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "if you're raising", pattern: "(?:if\\s+)?(?:you(?:'re|’re|\\s+are)|u\\s+r)\\s+(?:currently\\s+|actively\\s+)?raising|raising\\s+(?:your|a)\\s+(?:first\\s+|next\\s+)?(?:round|pre[- ]?seed|seed|series\\s+a)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "looking to invest", pattern: "looking\\s+(?:to\\s+invest|to\\s+back|for\\s+(?:startups|founders|companies)\\s+to\\s+(?:invest|back)|for\\s+(?:investment\\s+)?opportunities)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "we're investing in", pattern: "(?:we(?:'re|’re|\\s+are)|i(?:'m|’m|\\s+am))\\s+(?:actively\\s+)?(?:investing|writing\\s+(?:cheques|checks))" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "writing cheques", pattern: "(?:writing|writes?|cut(?:s|ting)?)\\s+(?:a\\s+|the\\s+)?(?:first\\s+)?(?:cheques?|checks?)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "cheque / ticket size", pattern: "(?:cheque|check|ticket)\\s+sizes?" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "deploying capital", pattern: "deploy(?:ing)?\\s+(?:capital|our\\s+fund|funds)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "backing founders", pattern: "(?:back|backing|partner\\s+with)\\s+(?:early[- ]stage\\s+|ambitious\\s+|exceptional\\s+|great\\s+)?(?:founders|startups)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 2, label: "calling all founders", pattern: "calling\\s+(?:all\\s+)?(?:founders|startups|entrepreneurs)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "investor office hours", pattern: "(?:investor\\s+|vc\\s+|open\\s+)?office\\s+hours" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "meet investors", pattern: "(?:meet|connect\\s+with|get\\s+in\\s+front\\s+of)\\s+(?:top\\s+|leading\\s+)?(?:investors|vcs|angels)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 2, label: "fund for startups", pattern: "(?:fund|syndicate|programme|program)\\s+(?:for|to\\s+back|backing|focused\\s+on|investing\\s+in)\\s+(?:[\\w&/-]+\\s+){0,4}(?:startups|founders|companies|entrepreneurs)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 2, label: "need funding?", pattern: "(?:need|needs|seeking|looking\\s+for|in\\s+search\\s+of)\\s+(?:funding|investment|capital|investors|an?\\s+investor)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 2, label: "invest in early-stage", pattern: "invest(?:s|ing)?\\s+in\\s+(?:early[- ]stage|pre[- ]seed|seed|series\\s+a)\\b" },
+    { category: CATEGORY.OPPORTUNITY, weight: 1, label: "DM / reach out", pattern: "dm\\s+(?:me|us)|reach\\s+out|drop\\s+(?:me\\s+)?a\\s+(?:dm|message|note)|email\\s+(?:me|us)|inbox\\s+(?:me|us)|ping\\s+(?:me|us)|would\\s+love\\s+to\\s+(?:chat|hear\\s+from|connect|talk|meet)|tell\\s+us\\s+about\\s+your\\s+(?:startup|company)|let'?s\\s+(?:chat|talk|connect)|(?:our|my)\\s+(?:inbox|dms?)\\s+(?:is|are)\\s+open|dms?\\s+(?:are\\s+)?open" },
+
+    // --- Funding opportunity: accelerators / incubators ----------------------
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "applications open", pattern: "applications?\\s+(?:are\\s+)?(?:now\\s+)?(?:open|live|closing)|(?:now\\s+)?accepting\\s+applications|apply\\s+(?:now|today|before|by)\\b|last\\s+date\\s+to\\s+apply" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "accelerator / incubator", pattern: "(?:accelerator|incubat(?:or|ion))\\s+(?:program(?:me)?s?|cohorts?|batch)|(?:startup|founder)\\s+(?:program(?:me)?|fellowship|residency)" },
+    { category: CATEGORY.OPPORTUNITY, weight: 2, label: "accelerator / incubator", pattern: "accelerators?|incubators?|incubation" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "cohort", pattern: "(?:next|new|upcoming|first|second|third|fourth|fifth)\\s+cohort|cohort\\s+(?:\\d+|[ivx]+)\\b" },
+    { category: CATEGORY.OPPORTUNITY, weight: 1, label: "cohort", pattern: "cohorts?" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "demo day", pattern: "demo\\s+day" },
+    { category: CATEGORY.OPPORTUNITY, weight: 3, label: "known accelerator", pattern: "Y\\s?Combinator|YC\\s+(?:W|S|F|X)\\d{2}|Techstars|Antler|Entrepreneur\\s+First|500\\s+Global|Plug\\s+and\\s+Play|Founders\\s+Factory|Sequoia\\s+Arc|Peak\\s+XV'?s?\\s+Surge|100X\\.VC|Venture\\s+Catalysts|Indian\\s+Angel\\s+Network|Google\\s+for\\s+Startups\\s+Accelerator|Microsoft\\s+for\\s+Startups|NSRCEL|T-Hub|CIIE", caseSensitive: true },
+    { category: CATEGORY.OPPORTUNITY, weight: 1, label: "apply", pattern: "apply|applications?" },
+
+    // --- Grants & competitions ----------------------------------------------
+    { category: CATEGORY.GRANT, weight: 3, label: "grant", pattern: "(?:startup|innovation|research|equity[- ]free)\\s+grants?|grants?\\s+(?:of|up\\s+to|worth)\\s+(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs|l)?|non[- ]dilutive" },
+    { category: CATEGORY.GRANT, weight: 3, label: "government scheme", pattern: "Startup\\s+India\\s+Seed\\s+Fund|SISFS|BIRAC|BIG\\s+grant|seed\\s+fund\\s+scheme|government\\s+(?:grant|scheme|funding)|DPIIT|MeitY\\s+(?:grant|scheme|SAMRIDH)|SAMRIDH" },
+    { category: CATEGORY.GRANT, weight: 3, label: "pitch competition", pattern: "pitch(?:ing)?\\s+(?:competition|contest|battle|fest|event|day|session)|startup\\s+(?:competition|challenge|contest)|innovation\\s+challenge" },
+    { category: CATEGORY.GRANT, weight: 3, label: "prize money", pattern: "cash\\s+prizes?|prize\\s+(?:money|pool|worth)|win\\s+(?:up\\s+to\\s+)?(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs|l)?" },
+    { category: CATEGORY.GRANT, weight: 1, label: "grant", pattern: "grants?" },
+
+    // --- Funding news --------------------------------------------------------
+    { category: CATEGORY.NEWS, weight: 3, label: "raised funding", pattern: "rais(?:ed|es)\\s+(?:(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs)?|[\\d.,]+\\s?(?:m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs))" },
+    { category: CATEGORY.NEWS, weight: 3, label: "round led by", pattern: "(?:round|funding|investment)\\s+(?:was\\s+)?led\\s+by|with\\s+participation\\s+from|co-led\\s+by" },
+    { category: CATEGORY.NEWS, weight: 3, label: "closed round", pattern: "clos(?:e|es|ed|ing)\\s+(?:(?:our|a|the|its|their|his|her|new|maiden|debut|first|second|third)\\s+)+(?:(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs|l)?\\s+)?(?:[\\w-]+\\s+)?(?:round|fund)|oversubscribed|(?:first|final)\\s+close" },
+    { category: CATEGORY.NEWS, weight: 2, label: "seed / pre-seed round", pattern: "(?:pre[- ]?seed|seed|bridge|angel)\\s+(?:round|funding|investment)" },
+    { category: CATEGORY.NEWS, weight: 2, label: "Series A-F", pattern: "series\\s+[a-f](?:\\s+(?:round|funding))?" },
+    { category: CATEGORY.NEWS, weight: 2, label: "funding round", pattern: "funding\\s+rounds?" },
+    { category: CATEGORY.NEWS, weight: 2, label: "backed by", pattern: "backed\\s+by" },
+    { category: CATEGORY.NEWS, weight: 1, label: "latest round", pattern: "(?:latest|new|recent|fresh)\\s+(?:funding\\s+)?round" },
+    { category: CATEGORY.NEWS, weight: 3, label: "IPO", pattern: "IPOs?|pre-IPO", caseSensitive: true },
+    { category: CATEGORY.NEWS, weight: 2, label: "M&A", pattern: "M&A", caseSensitive: true },
+    { category: CATEGORY.NEWS, weight: 2, label: "new fund", pattern: "fund\\s+(?:I|II|III|IV|V|VI|1|2|3|4|5)\\b|(?:new|maiden|debut)\\s+(?:(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs|l)?\\s+)?fund" },
+    { category: CATEGORY.NEWS, weight: 2, label: "AUM", pattern: "AUM", caseSensitive: true },
+    { category: CATEGORY.NEWS, weight: 2, label: "portfolio company", pattern: "portfolio\\s+compan(?:y|ies)" },
+    { category: CATEGORY.NEWS, weight: 2, label: "valuation", pattern: "(?:\\$|₹|rs\\.?|inr|usd)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores)?\\s+valuation|valued\\s+at\\s+(?:\\$|₹|rs\\.?|inr|usd|eur|£|€)\\s?[\\d.,]+\\s?(?:k|m|mn|million|b|bn|billion|cr|crore|crores|lakh|lakhs|l)?" },
+    { category: CATEGORY.NEWS, weight: 1, label: "valuation", pattern: "valuations?|valued\\s+at" },
+    { category: CATEGORY.NEWS, weight: 2, label: "raising (news)", pattern: "reportedly\\s+raising|(?<!who\\s)(?<!that\\s)is\\s+raising|in\\s+talks\\s+to\\s+raise|set\\s+to\\s+raise|plans\\s+to\\s+raise" },
+    { category: CATEGORY.NEWS, weight: 1, label: "unicorn", pattern: "unicorns?" },
+    { category: CATEGORY.NEWS, weight: 1, label: "acquisition", pattern: "acquisitions?|acquired" },
+    { category: CATEGORY.NEWS, weight: 1, label: "announcement", pattern: "(?:thrilled|excited|proud|delighted|happy|pleased)\\s+to\\s+(?:announce|share)|announcing" },
+
+    // --- Fundraising & VC insights -------------------------------------------
+    { category: CATEGORY.INSIGHTS, weight: 3, label: "investment thesis", pattern: "investment\\s+thesis" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "venture capital", pattern: "venture\\s+capital(?:ists?)?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "VC", pattern: "VCs?", caseSensitive: true },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "angel investor", pattern: "angel\\s+(?:investors?|investing|networks?|syndicates?)" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "private equity", pattern: "private\\s+equity" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "investors", pattern: "investing|investments?|investors?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "fundraising", pattern: "fund\\s?rais(?:e|es|ed|ing)|raising\\s+(?:capital|funds|money|a\\s+round)" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "pitch deck", pattern: "pitch\\s?decks?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "term sheet", pattern: "term\\s?sheets?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "cap table", pattern: "cap\\s+tables?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "family office", pattern: "family\\s+offices?" },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "limited partners", pattern: "limited\\s+partners?|LPs", caseSensitive: false },
+    { category: CATEGORY.INSIGHTS, weight: 2, label: "dry powder", pattern: "dry\\s+powder" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "invest", pattern: "invest(?:s|ed)?" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "founders", pattern: "founders?|co-founders?" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "due diligence", pattern: "due\\s+diligence" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "dilution", pattern: "dilution|diluted" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "exit", pattern: "exits?" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "fund", pattern: "funds?|funding|funded" },
+    { category: CATEGORY.INSIGHTS, weight: 1, label: "capital", pattern: "capital" },
+
+    // --- Markets & personal finance -------------------------------------------
+    { category: CATEGORY.MARKETS, weight: 3, label: "stock market", pattern: "stock\\s?markets?|share\\s?markets?|equity\\s+markets?" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "mutual fund", pattern: "mutual\\s+funds?" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "index fund", pattern: "index\\s+funds?" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "ETF", pattern: "ETFs?", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "SIP", pattern: "SIPs?", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "bull/bear market", pattern: "(?:bull|bear)(?:ish)?\\s+(?:market|run|rally|phase)" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "P/E ratio", pattern: "P/E|PE\\s+ratio", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "Nifty / Sensex", pattern: "Nifty(?:\\s?50|\\s+Bank)?|Sensex|SENSEX", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "S&P / Nasdaq / Dow", pattern: "S&P\\s?500|Nasdaq|NASDAQ|Dow\\s+Jones", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "options trading", pattern: "options\\s+trading|F&O|futures\\s+and\\s+options|intraday" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "demat", pattern: "demat" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "AIF / REIT", pattern: "AIFs?|REITs?|InvITs?", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 3, label: "real estate investing", pattern: "real\\s+estate\\s+(?:investing|investments?|investors?)|rental\\s+yields?" },
+    { category: CATEGORY.MARKETS, weight: 3, label: "wealth management", pattern: "wealth\\s+(?:creation|management|manager|building)|asset\\s+allocation" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "stocks", pattern: "stocks|equities|shares\\s+of|share\\s+price|stock\\s+price" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "dividend", pattern: "dividends?" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "bonds", pattern: "bonds|fixed\\s+income|treasury\\s+yields?|FDs?\\s+rates?" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "market cap", pattern: "market\\s+cap(?:italisation|italization)?" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "NSE / BSE / SEBI", pattern: "NSE|BSE|SEBI|RBI\\s+(?:policy|repo)", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 2, label: "Wall Street / Buffett", pattern: "wall\\s+street|buffett|berkshire" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "PMS", pattern: "PMS", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 2, label: "crypto", pattern: "crypto(?:currency|currencies)?" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "bitcoin / ethereum", pattern: "bitcoin|BTC|ethereum|ETH" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "personal finance", pattern: "financial\\s+(?:planning|freedom|independence)|passive\\s+income|compounding|retirement\\s+(?:planning|corpus)" },
+    { category: CATEGORY.MARKETS, weight: 2, label: "CAGR", pattern: "CAGR|XIRR", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 2, label: "hedge fund", pattern: "hedge\\s+funds?" },
+    { category: CATEGORY.MARKETS, weight: 1, label: "trading", pattern: "trading|traders?" },
+    { category: CATEGORY.MARKETS, weight: 1, label: "returns", pattern: "returns" },
+    { category: CATEGORY.MARKETS, weight: 1, label: "portfolio", pattern: "portfolio" },
+    { category: CATEGORY.MARKETS, weight: 1, label: "diversification", pattern: "diversif(?:y|ied|ication)" },
+    { category: CATEGORY.MARKETS, weight: 1, label: "ROI", pattern: "ROI", caseSensitive: true },
+    { category: CATEGORY.MARKETS, weight: 1, label: "gold", pattern: "gold\\s+(?:etf|bonds?|prices?)|sovereign\\s+gold|digital\\s+gold" },
+  ];
+
+  // Sites used for application / sign-up forms.
+  const FORM_LINK_PATTERN =
+    /(?:^|\/\/)(?:[\w-]+\.)*(?:forms\.gle|docs\.google\.com\/forms|typeform\.com|tally\.so|airtable\.com\/(?:app\w+\/)?(?:shr|pag)\w*|jotform\.com|forms\.zohopublic\.(?:com|in)|zfrmz\.(?:com|in)|forms\.office\.com|forms\.microsoft\.com|surveymonkey\.com|share\.hsforms\.com|fillout\.com|paperform\.co|cognitoforms\.com|wufoo\.com|formstack\.com|f6s\.com|gust\.com|forms\.app|formfacade\.com|tripetto\.app|heyflow\.app)/i;
+
+  function phrasePattern(phrases) {
+    return new RegExp(
+      `(?:^|[^\\p{L}\\p{N}_])(?:${phrases.join("|")})(?=$|[^\\p{L}\\p{N}_])`,
+      "iu",
+    );
+  }
+
+  // Wording that clearly points to a form, even when the link isn't visible
+  // (e.g. it is in the comments or hidden behind lnkd.in).
+  const FORM_PHRASE_PATTERN = phrasePattern([
+    "fill(?:ing)?\\s+(?:out\\s+|in\\s+|up\\s+)?(?:this|the|our|below|a)?\\s*(?:short\\s+|quick\\s+)?(?:google\\s+)?form",
+    "google\\s+forms?",
+    "form\\s+link",
+    "application\\s+form",
+    "(?:interest|registration|sign[- ]?up)\\s+form",
+    "apply\\s+(?:here|via|through|using|at|on)\\b",
+  ]);
+
+  // Vaguer wording ("link in comments") is used for anything from blogs to
+  // waitlists, so it only counts together with real funding wording.
+  const WEAK_FORM_PHRASE_PATTERN = phrasePattern([
+    "link\\s+(?:is\\s+)?in\\s+(?:the\\s+)?(?:first\\s+)?comments?",
+    "link\\s+(?:is\\s+)?(?:below|in\\s+bio)",
+  ]);
+
+  // Founder / startup / funding wording needed for the form rule, so forms for
+  // webinars, surveys or jobs aren't kept.
+  const FUNDING_CONTEXT_PATTERN =
+    /(?:^|[^\p{L}\p{N}_])(?:founders?|co-founders?|fund\s?rais\w*|funding|raising|raise|pitch(?:es|ing)?|pitch\s?decks?|decks?|investors?|investments?|investing|VCs?|venture\s+capital|accelerators?|incubat\w*|cohorts?|pre[- ]seed|seed\s+(?:round|stage|funding)|angels?|cheques?|grants?|demo\s+day)(?=$|[^\p{L}\p{N}_])/iu;
+  const STRONG_FUNDING_CONTEXT_PATTERN =
+    /(?:^|[^\p{L}\p{N}_])(?:fund\s?rais\w*|funding|raising|raise|pitch(?:es|ing)?|pitch\s?decks?|decks?|investors?|investments?|investing|VCs?|venture\s+capital|accelerators?|incubat\w*|cohorts?|pre[- ]seed|seed\s+(?:round|stage|funding)|angels?|cheques?|grants?|demo\s+day)(?=$|[^\p{L}\p{N}_])/iu;
+  const STARTUP_PATTERN = /(?:^|[^\p{L}\p{N}_])(?:startups?|start-ups?|entrepreneurs?)(?=$|[^\p{L}\p{N}_])/iu;
+  const HIRING_PATTERN =
+    /(?:^|[^\p{L}\p{N}_])(?:hiring|we(?:'re|’re|\s+are)\s+looking\s+for\s+an?\s+\w+|job\s+(?:opening|opportunity|role)|internships?|vacanc(?:y|ies)|open\s+roles?|apply\s+for\s+(?:the|this)\s+(?:role|position)|join\s+(?:our|the)\s+(?:team|startup|company)|(?:product|software|ux|ui|frontend|backend|full[- ]?stack|marketing|sales|growth|graphic|content)\s+(?:designer|engineer|developer|manager|intern|executive|associate|lead|writer)|CTC|salary|walk-?in)(?=$|[^\p{L}\p{N}_])/iu;
+
+  // Author headlines that belong to investors.
+  const INVESTOR_HEADLINE_PATTERN =
+    /(?:^|[^\p{L}\p{N}_])(?:angel\s+investor|investor(?!\s+relations)|investing\s+in|VC|venture\s+(?:capital(?:ist)?|partner|investor)|general\s+partner|managing\s+partner|limited\s+partner|family\s+office|fund\s+manager|(?:capital|ventures|vc|fund|angels|syndicate)(?=\s*(?:$|[|,•·@)]))|(?:partner|principal|associate|analyst|investment\s+(?:manager|associate|analyst|professional))\s+(?:at|@)\s+[^|,•·]*(?:capital|ventures|vc|fund|partners|angels|syndicate))(?=$|[^\p{L}\p{N}_])/iu;
+
+  const compiledRulesCache = new Map();
 
   function escapeRegExp(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
-  function compileKeywords(extraKeywords = []) {
+  function compileRules(extraKeywords = []) {
     const cacheKey = extraKeywords.join("\u0000");
-    if (compiledKeywordsCache.has(cacheKey)) {
-      return compiledKeywordsCache.get(cacheKey);
+    if (compiledRulesCache.has(cacheKey)) {
+      return compiledRulesCache.get(cacheKey);
     }
 
     const extras = extraKeywords
       .map((keyword) => String(keyword || "").trim())
       .filter(Boolean)
-      .map((keyword) => ({ term: keyword, weight: DEFAULT_MIN_SCORE }));
+      .map((keyword) => ({
+        category: CATEGORY.CUSTOM,
+        weight: DEFAULT_MIN_SCORE,
+        label: keyword,
+        pattern: escapeRegExp(keyword),
+      }));
 
-    const compiled = [...INVESTMENT_KEYWORDS, ...extras].map((keyword) => {
-      const source = keyword.pattern || escapeRegExp(keyword.term);
+    const compiled = [...RULES, ...extras].map((rule) => ({
+      ...rule,
       // \b does not work next to "$", "&", "₹" etc., so use explicit
       // non-word lookarounds instead.
-      const regex = new RegExp(
-        `(?:^|[^\\p{L}\\p{N}_])(?:${source})(?=$|[^\\p{L}\\p{N}_])`,
-        keyword.caseSensitive ? "u" : "iu",
-      );
-      return { ...keyword, regex };
-    });
+      regex: new RegExp(
+        `(?:^|[^\\p{L}\\p{N}_])(?:${rule.pattern})(?=$|[^\\p{L}\\p{N}_])`,
+        rule.caseSensitive ? "u" : "iu",
+      ),
+    }));
 
-    compiledKeywordsCache.set(cacheKey, compiled);
+    compiledRulesCache.set(cacheKey, compiled);
     return compiled;
   }
 
-  function classifyText(text, { extraKeywords = [], minScore = DEFAULT_MIN_SCORE } = {}) {
-    const matches = [];
-    let score = 0;
+  function getFormLinks(links) {
+    return (links || []).filter((link) => FORM_LINK_PATTERN.test(link));
+  }
 
-    if (text) {
-      for (const keyword of compileKeywords(extraKeywords)) {
-        if (keyword.regex.test(text)) {
-          matches.push(keyword.term);
-          score += keyword.weight;
-        }
-      }
+  // post: { text, headline, links }
+  function classifyPost(post, { extraKeywords = [], minScore = DEFAULT_MIN_SCORE } = {}) {
+    const text = post?.text || "";
+    const scores = Object.fromEntries(Object.values(CATEGORY).map((c) => [c, 0]));
+    const reasons = [];
+    const matches = [];
+    // Labels already counted, so two rules with the same label (e.g. the
+    // strong and weak "cohort" rules) only add the stronger one.
+    const countedLabels = new Set();
+
+    for (const rule of compileRules(extraKeywords)) {
+      const key = `${rule.category}|${rule.label}`;
+      if (countedLabels.has(key) || !rule.regex.test(text)) continue;
+      countedLabels.add(key);
+      scores[rule.category] += rule.weight;
+      matches.push(rule.label);
+      reasons.push(`${rule.label} +${rule.weight}`);
     }
 
-    return { isInvestment: score >= minScore, score, matches };
+    const headline = post?.headline || "";
+    const investorHeadline = headline.match(INVESTOR_HEADLINE_PATTERN)?.[0]?.trim() || "";
+    if (investorHeadline) {
+      // An investor asking for something ("DM me", "apply") is an
+      // opportunity; otherwise the headline only supports the post's topic.
+      const asks = scores[CATEGORY.OPPORTUNITY] > 0;
+      scores[asks ? CATEGORY.OPPORTUNITY : CATEGORY.INSIGHTS] += HEADLINE_POINTS;
+      reasons.push(`author headline "${truncate(headline, 60)}" +${HEADLINE_POINTS}`);
+    }
+
+    const formLinks = getFormLinks(post?.links);
+    const formPhrase = text.match(FORM_PHRASE_PATTERN)?.[0]?.trim() || "";
+    const weakFormPhrase = text.match(WEAK_FORM_PHRASE_PATTERN)?.[0]?.trim() || "";
+    const fundingContext =
+      FUNDING_CONTEXT_PATTERN.test(text) ||
+      (STARTUP_PATTERN.test(text) && !HIRING_PATTERN.test(text));
+    const formRule = Boolean(
+      ((formLinks.length || formPhrase) && fundingContext) ||
+        (weakFormPhrase && STRONG_FUNDING_CONTEXT_PATTERN.test(text)),
+    );
+    if (formLinks.length) reasons.push(`form link (${formLinks.length})`);
+    else if (formPhrase || weakFormPhrase) {
+      reasons.push(`mentions "${formPhrase || weakFormPhrase}"`);
+    }
+
+    const total = Object.values(scores).reduce((sum, value) => sum + value, 0);
+    const isOpportunity = scores[CATEGORY.OPPORTUNITY] >= minScore;
+    const isInvestment = isOpportunity || formRule || total >= minScore;
+
+    let category = "";
+    if (isOpportunity) category = CATEGORY.OPPORTUNITY;
+    else if (formRule) category = CATEGORY.FORM;
+    else if (isInvestment) {
+      category = CATEGORY_PRIORITY.filter(
+        (c) => c !== CATEGORY.OPPORTUNITY && c !== CATEGORY.FORM,
+      ).reduce((best, c) => (scores[c] > scores[best] ? c : best), CATEGORY.GRANT);
+      // Points from weak opportunity words ("apply", "DM me") alone don't
+      // make a post an opportunity; if nothing else scored, call it insights.
+      if (!scores[category]) category = CATEGORY.INSIGHTS;
+    }
+
+    return {
+      isInvestment,
+      category,
+      score: total,
+      matches,
+      formLinks,
+      whyKept: isInvestment
+        ? `${category} · score ${total}${formRule ? " · form rule" : ""}: ${reasons.join(", ")}`
+        : "",
+    };
+  }
+
+  function categoryRank(category) {
+    const index = CATEGORY_PRIORITY.indexOf(category);
+    return index === -1 ? CATEGORY_PRIORITY.length : index;
   }
 
   function getCsrfToken() {
@@ -857,17 +1030,35 @@
       });
     }
 
-    const posts = rawPosts
-      .filter((post) => includePromoted || !post.isPromoted)
+    const candidates = rawPosts.filter((post) => includePromoted || !post.isPromoted);
+    const resolvedLinks = await resolveShortLinks(candidates);
+
+    const posts = candidates
       .map(({ classifyText: textToClassify, ...post }) => {
-        const { isInvestment, score, matches } = classifyText(textToClassify, {
-          extraKeywords,
-          minScore,
-        });
-        return { ...post, isInvestment, score, matches };
+        const links = [
+          ...(post.links || []),
+          ...(post.links || []).map((link) => resolvedLinks[link]).filter(Boolean),
+        ];
+        const { isInvestment, category, score, matches, formLinks, whyKept } =
+          classifyPost(
+            { text: textToClassify, headline: post.authorHeadline, links },
+            { extraKeywords, minScore },
+          );
+        return {
+          ...post,
+          isInvestment,
+          category,
+          score,
+          matches,
+          formLinks: [...new Set(formLinks)],
+          whyKept,
+        };
       })
       .filter((post) => post.isInvestment)
-      .sort((a, b) => b.score - a.score);
+      .sort(
+        (a, b) =>
+          categoryRank(a.category) - categoryRank(b.category) || b.score - a.score,
+      );
 
     const result = {
       status: "done",
@@ -886,6 +1077,38 @@
     result.sheetSync = await saveToGoogleSheet(posts);
     await saveScanState(result);
     return result;
+  }
+
+  const MAX_SHORT_LINKS_PER_SCAN = 60;
+
+  // LinkedIn replaces links in posts with lnkd.in short links, which hides
+  // e.g. a Google Form. Asks the background worker for the real destination,
+  // only for posts that talk about founders, startups or funding.
+  async function resolveShortLinks(posts) {
+    const urls = [
+      ...new Set(
+        posts
+          .filter(
+            (post) =>
+              FUNDING_CONTEXT_PATTERN.test(post.classifyText || "") ||
+              STARTUP_PATTERN.test(post.classifyText || ""),
+          )
+          .flatMap((post) => post.links || [])
+          .filter((link) => /^https?:\/\/lnkd\.in\//i.test(link)),
+      ),
+    ].slice(0, MAX_SHORT_LINKS_PER_SCAN);
+    if (!urls.length) return {};
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        action: "bg-resolveShortLinks",
+        urls,
+      });
+      return response?.resolved || {};
+    } catch (error) {
+      console.log("feedScanner: couldn't resolve lnkd.in links", error);
+      return {};
+    }
   }
 
   // Adds the investment posts to the history kept by the background worker.
@@ -953,7 +1176,7 @@
 
   // Exposed for debugging from the DevTools console of the content script.
   window.__anchorsFeedScanner = {
-    classifyText,
+    classifyPost,
     parseFeedApiElement,
     runScan,
   };
